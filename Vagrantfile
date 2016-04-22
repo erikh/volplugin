@@ -24,16 +24,7 @@ if ENV["BIG"]
   memory = 8192
 end
 
-MEMORY   = memory
-NO_PROXY = '192.168.24.50,192.168.24.10,192.168.24.11,192.168.24.12'
-
-shell_provision = <<-EOF
-echo "export http_proxy='$1'" >> /etc/profile.d/envvar.sh
-echo "export https_proxy='$2'" >> /etc/profile.d/envvar.sh
-echo "export no_proxy='#{NO_PROXY}'" >> /etc/profile.d/envvar.sh
-
-. /etc/profile.d/envvar.sh
-EOF
+MEMORY = memory
 
 ansible_provision = proc do |ansible|
   ansible.playbook = 'ansible/site.yml'
@@ -44,23 +35,13 @@ ansible_provision = proc do |ansible|
     'volplugin-test' => (0..NMONS - 1).map { |j| "mon#{j}" },
   }
 
-  proxy_env = {
-    "no_proxy" => NO_PROXY
-  }
-
-  %w[HTTP_PROXY HTTPS_PROXY http_proxy https_proxy].each do |name|
-    if ENV[name]
-      proxy_env[name] = ENV[name]
-    end
-  end
-
   # In a production deployment, these should be secret
   ansible.extra_vars = {
+    env: {}, # required
     docker_version: "1.11.0",
     swarm_bootstrap_node_name: "mon0",
     docker_device: "/dev/sdb",
     etcd_peers_group: 'volplugin-test',
-    env: proxy_env,
     fsid: '4a158d27-f750-41d5-9e7f-26ce4c9d2d45',
     monitor_secret: 'AQAWqilTCDh7CBAAawXt6kyTgLFCxSvJhTEmuw==',
     journal_size: 100,
@@ -69,7 +50,7 @@ ansible_provision = proc do |ansible|
     cluster_network: "#{SUBNET}.0/24",
     public_network: "#{SUBNET}.0/24",
     devices: "[ '/dev/sdc', '/dev/sdd' ]",
-    service_vip: "192.168.24.50",
+    service_vip: "192.168.24.253", # needed because of the way we do ip allocation below
     journal_collocation: 'true',
     validate_certs: 'no',
   }
@@ -104,8 +85,8 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
       [:vmware_desktop, :vmware_workstation, :vmware_fusion].each do |provider|
         mon.vm.provider provider do |v, override|
-          override.vm.network :private_network, type: "dhcp", ip: "#{SUBNET}.1#{i}", auto_config: false
-          override.vm.network :private_network, type: "dhcp", ip: "#{SUBNET}.2#{i}", auto_config: false
+          override.vm.network :private_network, type: "dhcp", ip: "#{SUBNET}.#{rand(25)}#{i}"#, auto_config: false
+          override.vm.network :private_network, type: "dhcp", ip: "#{SUBNET}.#{rand(25)}#{i}"#, auto_config: false
           v.vmx["scsi0:1.present"] = 'TRUE'
           v.vmx["scsi0:1.fileName"] = create_vmdk("docker-#{i}", '11000MB')
 
@@ -118,7 +99,6 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
           override.vm.provision 'shell' do |s|
             s.inline = <<-EOF
-              #{shell_provision}
               if sudo ip link | grep -q ens33
               then
                 sudo ip link set dev ens33 down
@@ -143,10 +123,10 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       end
 
       mon.vm.provider :virtualbox do |vb, override|
-        vb.linked_clone = true if Vagrant::VERSION =~ /^1.8/
+        vb.linked_clone = true if Vagrant::VERSION >= "1.8"
 
-        override.vm.network :private_network, ip: "#{SUBNET}.1#{i}", virtualbox__intnet: true
-        override.vm.network :private_network, ip: "#{SUBNET}.2#{i}", virtualbox__intnet: true
+        override.vm.network :private_network, ip: "#{SUBNET}.#{rand(25)}#{i}", virtualbox__intnet: true
+        override.vm.network :private_network, ip: "#{SUBNET}.#{rand(25)}#{i}", virtualbox__intnet: true
 
         vb.customize ['createhd',
                       '--filename', "docker-#{i}",
@@ -179,11 +159,6 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
         vb.customize ['modifyvm', :id, '--memory', "#{MEMORY}"]
         vb.customize ['modifyvm', :id, '--paravirtprovider', "kvm"]
-
-        override.vm.provision "shell" do |s|
-          s.inline = shell_provision
-          s.args = [ ENV["http_proxy"] || "", ENV["https_proxy"] || "" ]
-        end
 
         # Run the provisioner after the last machine comes up
         override.vm.provision 'ansible', &ansible_provision if i == (NMONS - 1)
