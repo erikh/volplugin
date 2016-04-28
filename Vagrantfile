@@ -56,6 +56,7 @@ ansible_provision = proc do |ansible|
 
   # In a production deployment, these should be secret
   ansible.extra_vars = {
+    use_nfs: true,
     docker_version: "1.11.0",
     swarm_bootstrap_node_name: "mon0",
     docker_device: "/dev/sdb",
