@@ -92,7 +92,7 @@ build: golint govet
 	vagrant ssh mon0 -c 'sudo -i sh -c "cd $(GUESTGOPATH); make run-build"'
 	if [ ! -n "$$DEMO" ]; then for i in mon1 mon2; do vagrant ssh $$i -c 'sudo sh -c "pkill volplugin; pkill apiserver; pkill volsupervisor; mkdir -p /opt/golang/bin; cp /tmp/bin/* /opt/golang/bin"'; done; fi
 
-docker: host-build
+docker: local-build
 	docker build -t contiv/volplugin .
 	docker build -f Dockerfile.autorun -t contiv/volplugin-autoconfig .
 
@@ -120,13 +120,16 @@ run-apiserver:
 	sudo pkill apiserver || exit 0
 	sudo -E nohup bash -c '$(GUESTBINPATH)/apiserver &>/tmp/apiserver.log &'
 
+local-build:
+	GOBIN=${PWD}/bin make host-build
+
 host-build:
-	GOBIN=${PWD}/bin GOGC=1000 go install -v \
+	GOGC=1000 go install -v \
 		 -ldflags '-X main.version=$(if $(BUILD_VERSION),$(BUILD_VERSION),devbuild)' \
 		 ./volcli/volcli/ ./volplugin/volplugin/ ./apiserver/apiserver/ ./volsupervisor/volsupervisor/
 
 run-build: host-build
-	cp ${PWD}/bin/* /tmp/bin
+	cp /opt/golang/bin/* /tmp/bin
 
 system-test: run
 	@USE_DRIVER="${USE_DRIVER}" TESTRUN="${TESTRUN}" ./build/scripts/systemtests.sh
