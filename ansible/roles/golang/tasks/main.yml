@@ -1,0 +1,36 @@
+- name: download Golang {{ go_version }}
+  get_url:
+    validate_certs: "{{ validate_certs }}"
+    url: "https://storage.googleapis.com/golang/go{{ go_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+
+- name: install Golang {{ go_version }}
+  shell: "rm -rf go/ && tar xfvz /tmp/go{{ go_version }}.linux-amd64.tar.gz"
+  args:
+    chdir: /usr/local/
+
+- name: setup golang environment
+  copy:
+    dest: /etc/profile.d/00golang.sh
+    content: "export PATH=/opt/golang/bin:/usr/local/go/bin:$PATH; export GOPATH=/opt/golang"
+
+- name: install golang dev packages (debian)
+  apt:
+    name: "{{ item }}"
+    state: latest
+  with_items:
+    - git
+    - mercurial
+    - build-essential
+  when: ansible_os_family == "Debian"
+
+- name: install golang dev packages (redhat)
+  yum:
+    name: "{{ item }}"
+    update_cache: true
+    state: latest
+  with_items:
+    - git
+    - mercurial
+    - gcc
+  when: ansible_os_family == "RedHat"
