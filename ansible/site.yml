@@ -20,15 +20,14 @@
   environment: '{{ env }}'
   roles: 
   - { role: base }
+  - { role: golang }
   - { role: nfs }
+  - { role: docker, etcd_client_port1: 2379 }
   - { role: vagrant }
   - { role: ucarp }
-  - { role: docker, etcd_client_port1: 2379 }
   - { role: etcd, run_as: master }
   - { role: ceph-mon, mon_group_name: volplugin-test }
   - { role: ceph-osd, mon_group_name: volplugin-test, osd_group_name: volplugin-test }
-  - { role: scheduler_stack, run_as: master }
-  - { role: contiv_network, run_as: master }
 
 # cluster-node hosts corresponds to the hosts that shall be managed by cluster manager.
 # This host group shall provision a host with all required packages needed to make
