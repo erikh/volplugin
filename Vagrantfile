@@ -118,6 +118,7 @@ ansible_provision = proc do |ansible|
   # https://github.com/mitchellh/vagrant/issues/3539
   ansible.groups = {
     'volplugin-test' => (0..NMONS - 1).map { |j| "mon#{j}" },
+    'mons' => (0..NMONS - 1).map { |j| "mon#{j}" },
   }
 
   proxy_env = {
@@ -149,10 +150,21 @@ ansible_provision = proc do |ansible|
     netplugin_if: "enp0s9",
     cluster_network: "#{SUBNET}.0/24",
     public_network: "#{SUBNET}.0/24",
-    devices: "[ '/dev/sdc', '/dev/sdd' ]",
+    ceph_osd_docker_devices: "[ '/dev/sdc', '/dev/sdd' ]",
     service_vip: "#{SUBNET}.50",
     journal_collocation: 'true',
     validate_certs: 'no',
+    kv_type: 'etcd',
+    kv_endpoint: '127.0.0.1',
+    kv_port: '4001',
+    mon_docker_privileged: 'true',
+    mon_containerized_default_ceph_conf_with_kv: 'true',
+    mon_containerized_deployment_with_kv: 'true',
+    mon_containerized_deployment: 'true',
+    osd_containerized_deployment: 'true',
+    osd_containerized_deployment_with_kv: 'true',
+    ceph_mon_docker_interface: "enp0s8",
+    ceph_mon_docker_subnet: "#{SUBNET}.0/24",
   }
   ansible.limit = 'all'
 end
@@ -242,8 +254,9 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
         # Controller names are dependent on the VM being built.
         # Be careful while changing the box.
         vb.customize ['storageattach', :id,
-                      '--storagectl', 'SATA Controller',
-                      '--port', 3,
+                      '--storagectl', 'IDE Controller',
+                      '--device', 1,
+                      '--port', 0,
                       '--type', 'hdd',
                       '--medium', "docker-#{i}.vdi"]
 
@@ -258,8 +271,9 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
             # Controller names are dependent on the VM being built.
             # Be careful while changing the box.
             vb.customize ['storageattach', :id,
-                          '--storagectl', 'SATA Controller',
-                          '--port', 4 + d,
+                          '--storagectl', 'IDE Controller',
+                          '--device', 0 + d,
+                          '--port', 1,
                           '--type', 'hdd',
                           '--medium', vdi_disk_path]
           end
