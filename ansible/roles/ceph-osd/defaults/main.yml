@@ -8,6 +8,12 @@
 
 fetch_directory: fetch/
 
+# Even though OSD nodes should not have the admin key
+# at their disposal, some people might want to have it
+# distributed on OSD nodes. Setting 'copy_admin_key' to 'true'
+# will copy the admin key to the /etc/ceph/ directory
+copy_admin_key: false
+
 ####################
 # OSD CRUSH LOCATION
 ####################
@@ -104,13 +110,23 @@ osd_directory: false
 #  - /var/lib/ceph/osd/mydir2
 
 
+# V. Fith scenario: this will partition disks for BlueStore
+# Use 'true' to enable this scenario
+bluestore: false
+
+
 ##########
 # DOCKER #
 ##########
 
 osd_containerized_deployment: false
+osd_containerized_deployment_with_kv: false
+kv_type: etcd
+kv_endpoint: 127.0.0.1
+ceph_osd_docker_prepare_env: "OSD_FORCE_ZAP=1"
 ceph_osd_docker_username: ceph
 ceph_osd_docker_imagename: daemon
 ceph_osd_docker_extra_env: "CEPH_DAEMON=OSD_CEPH_DISK" # comma separated variables
-#ceph_osd_docker_device:
+#ceph_osd_docker_devices:
 # - /dev/sdb
+ceph_docker_on_openstack: false

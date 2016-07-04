@@ -1,26 +1,25 @@
 ---
-
 - name: install the ceph repository stable key
   apt_key:
-    data: "{{ lookup('file', '../../files/cephstable.asc') }}"
+    data: "{{ lookup('file', role_path+'/files/cephstable.asc') }}"
     state: present
   when: ceph_stable
 
 - name: install the ceph development repository key
   apt_key:
-    data: "{{ lookup('file', '../../files/cephdev.asc') }}"
+    data: "{{ lookup('file', role_path+'/files/cephdev.asc') }}"
     state: present
   when: ceph_dev
 
 - name: install intank ceph enterprise repository key
   apt_key:
-    data: "{{ lookup('file', '../../files/cephstableice.asc') }}"
+    data: "{{ lookup('file', role_path+'/files/cephstableice.asc') }}"
     state: present
   when: ceph_stable_ice
 
 - name: add ceph stable repository
   apt_repository:
-    repo: "deb http://ceph.com/debian-{{ ceph_stable_release }}/ {{ ceph_stable_distro_source | default(ansible_lsb.codename) }} main"
+    repo: "deb {{ ceph_stable_repo }} {{ ceph_stable_distro_source | default(ansible_lsb.codename) }} main"
     state: present
   changed_when: false
   when: ceph_stable
@@ -38,3 +37,15 @@
     state: present
   changed_when: false
   when: ceph_stable_ice
+
+- name: add ubuntu cloud archive key package
+  apt:
+    pkg: ubuntu-cloud-keyring
+  when: ceph_stable_uca
+
+- name: add ubuntu cloud archive repository
+  apt_repository:
+    repo: "deb {{ ceph_stable_repo_uca }} {{ ceph_stable_release_uca}} main"
+    state: present
+  changed_when: false
+  when: ceph_stable_uca

@@ -8,42 +8,39 @@
 - name: start rgw
   command: /etc/init.d/radosgw start
   when:
-    rgwstatus.rc != 0 and
-    ansible_distribution != "Ubuntu" and
-    ansible_os_family != 'RedHat'
+    - rgwstatus.rc != 0
+    - ansible_distribution != "Ubuntu"
+    - ansible_os_family != 'RedHat'
+    - not use_systemd
 
-- name: activate rgw on ubuntu
-  command: initctl emit radosgw cluster=ceph id=rgw.{{ ansible_hostname }}
+- name: start and add that the rados gateway service to the init sequence (ubuntu)
+  command: initctl emit radosgw cluster={{ cluster }} id=rgw.{{ ansible_hostname }}
   changed_when: false
-  when: ansible_distribution == 'Ubuntu'
-
-- name: start rgw on ubuntu
-  service:
-    name: radosgw
-    args: id=rgw.{{ ansible_hostname }}
-    state: started
-  when: ansible_distribution == 'Ubuntu'
+  failed_when: false
+  when: not use_systemd
 
 - name: start rgw on red hat (before or on infernalis)
   service:
     name: ceph-radosgw
     state: started
     enabled: yes
-  when: ansible_os_family == 'RedHat' and
-    (ceph_stable_release == 'dumpling' or
-    ceph_stable_release == 'emperor' or
-    ceph_stable_release == 'firefly' or
-    ceph_stable_release == 'giant' or
-    ceph_stable_release == 'hammer')
+  when:
+    - ansible_os_family == 'RedHat'
+    - is_before_infernalis
 
-- name: start rgw on red hat (after infernalis)
+- name: enable systemd unit file for rgw instance (for or after infernalis)
+  command: systemctl enable ceph-radosgw@rgw.{{ ansible_hostname }}
+  changed_when: false
+  failed_when: false
+  when:
+    - use_systemd
+    - is_after_hammer
+
+- name: start rgw with systemd (for or after infernalis)
   service:
-    name: ceph-radosgw@{{ ansible_hostname }}
+    name: ceph-radosgw@rgw.{{ ansible_hostname }}
     state: started
     enabled: yes
-  when: ansible_os_family == 'RedHat' and not
-    (ceph_stable_release == 'dumpling' or
-    ceph_stable_release == 'emperor' or
-    ceph_stable_release == 'firefly' or
-    ceph_stable_release == 'giant' or
-    ceph_stable_release == 'hammer')
+  when:
+    - use_systemd
+    - is_after_hammer
