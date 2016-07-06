@@ -35,6 +35,10 @@ func genRandomString(prefix, suffix string, strlen int) string {
 	return prefix + string(randStr) + suffix
 }
 
+func (s *systemtestSuite) rbd(cmd string) (string, error) {
+	return s.mon0cmd(fmt.Sprintf("docker run -i --volumes-from=mon0 ceph/rbd %s", cmd))
+}
+
 func (s *systemtestSuite) dockerRun(host string, tty, daemon bool, volume, command string) (string, error) {
 	ttystr := ""
 	daemonstr := ""
@@ -106,15 +110,15 @@ func (s *systemtestSuite) readIntent(fn string) (*config.Policy, error) {
 func (s *systemtestSuite) purgeVolume(host, policy, name string, purgeCeph bool) error {
 	log.Infof("Purging %s/%s. Purging ceph: %v", host, name, purgeCeph)
 
-	// ignore the error here so we get to the purge if we have to
+	// // ignore the error here so we get to the purge if we have to
 	if out, err := s.vagrant.GetNode(host).RunCommandWithOutput(fmt.Sprintf("docker volume rm %s/%s", policy, name)); err != nil {
 		log.Error(out, err)
 	}
 
 	defer func() {
 		if purgeCeph && cephDriver() {
-			s.vagrant.GetNode("mon0").RunCommand(fmt.Sprintf("sudo rbd snap purge rbd/%s.%s", policy, name))
-			s.vagrant.GetNode("mon0").RunCommand(fmt.Sprintf("sudo rbd rm rbd/%s.%s", policy, name))
+			s.rbd(fmt.Sprintf("snap purge rbd/%s.%s", policy, name))
+			s.rbd(fmt.Sprintf("rm rbd/%s.%s", policy, name))
 		}
 	}()
 
@@ -194,12 +198,17 @@ func (s *systemtestSuite) clearNFS() {
 	s.mon0cmd("sudo rm -rf /volplugin && sudo mkdir /volplugin")
 }
 
+func clearVolumeHost(node vagrantssh.TestbedNode) error {
+	log.Infof("Clearing docker volumes")
+	out, err := node.RunCommandWithOutput("docker volume ls | grep volplugin | tail -n +2 | awk \"{ print \\$2 }\" | xargs docker volume rm")
+	if err != nil {
+		log.Error(out)
+	}
+	return err
+}
+
 func (s *systemtestSuite) rebootstrap() error {
 	if os.Getenv("NO_TEARDOWN") == "" {
-		s.clearContainers()
-		stopVolsupervisor(s.vagrant.GetNode("mon0"))
-		s.vagrant.IterateNodes(stopVolplugin)
-		s.vagrant.IterateNodes(stopVolmaster)
 		if cephDriver() {
 			s.clearRBD()
 		}
@@ -208,22 +217,19 @@ func (s *systemtestSuite) rebootstrap() error {
 			s.clearNFS()
 		}
 
+		s.vagrant.IterateNodes(stopVolplugin)
+		s.vagrant.IterateNodes(stopApiserver)
+		s.vagrant.IterateNodes(stopVolsupervisor)
+
 		log.Info("Clearing etcd")
 		utils.ClearEtcd(s.vagrant.GetNode("mon0"))
-
-		if err := s.restartDocker(); err != nil {
-			return err
-		}
-		if err := s.waitDockerizedServices(); err != nil {
-			return err
-		}
 	}
 
-	if err := s.vagrant.IterateNodes(startVolmaster); err != nil {
+	if err := s.vagrant.IterateNodes(startApiserver); err != nil {
 		return err
 	}
 
-	if err := s.vagrant.IterateNodes(waitForVolmaster); err != nil {
+	if err := s.vagrant.IterateNodes(waitForApiserver); err != nil {
 		return err
 	}
 
@@ -235,15 +241,7 @@ func (s *systemtestSuite) rebootstrap() error {
 		return err
 	}
 
-	if err := waitForVolsupervisor(s.vagrant.GetNode("mon0")); err != nil {
-		return err
-	}
-
 	if err := s.vagrant.IterateNodes(startVolplugin); err != nil {
-		return err
-	}
-
-	if err := s.vagrant.IterateNodes(waitForVolplugin); err != nil {
 		return err
 	}
 
@@ -314,37 +312,7 @@ func runCommandUntilNoError(node vagrantssh.TestbedNode, cmd string, timeout int
 	return err
 }
 
-func waitForVolsupervisor(node vagrantssh.TestbedNode) error {
-	log.Infof("Checking if volsupervisor is running on %q", node.GetName())
-	err := runCommandUntilNoError(node, "pgrep -c volsupervisor", 10)
-	if err == nil {
-		log.Infof("Volsupervisor is running on %q", node.GetName())
-
-	}
-	return nil
-}
-
-func waitForVolmaster(node vagrantssh.TestbedNode) error {
-	log.Infof("Checking if apiserver is running on %q", node.GetName())
-	err := runCommandUntilNoError(node, "pgrep -c apiserver", 10)
-	if err == nil {
-		log.Infof("Volmaster is running on %q", node.GetName())
-
-	}
-	return nil
-}
-
-func waitForVolplugin(node vagrantssh.TestbedNode) error {
-	log.Infof("Checking if volplugin is running on %q", node.GetName())
-	err := runCommandUntilNoError(node, "pgrep -c volplugin", 10)
-	if err == nil {
-		log.Infof("Volplugin is running on %q", node.GetName())
-
-	}
-	return nil
-}
-
-func (s *systemtestSuite) pullDebian() error {
+func (s *systemtestSuite) pullImage() error {
 	log.Infof("Pulling alpine:latest on all boxes")
 	return s.vagrant.SSHExecAllNodes("docker pull alpine")
 }
@@ -359,41 +327,48 @@ func restartNetplugin(node vagrantssh.TestbedNode) error {
 	return nil
 }
 
+func waitForApiserver(node vagrantssh.TestbedNode) error {
+	var err error
+
+	for i := 0; i < 600; i++ { // 10 seconds
+		err = node.RunCommand("docker ps | grep -q apiserver")
+		if err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return err
+}
+
 func startVolsupervisor(node vagrantssh.TestbedNode) error {
 	log.Infof("Starting the volsupervisor on %q", node.GetName())
-	return node.RunCommandBackground("(sudo -E nohup `which volsupervisor` </dev/null 2>&1 | sudo tee -a /tmp/volsupervisor.log) &")
+	return node.RunCommand("docker start volsupervisor")
 }
 
 func stopVolsupervisor(node vagrantssh.TestbedNode) error {
 	log.Infof("Stopping the volsupervisor on %q", node.GetName())
-	return node.RunCommand("sudo pkill volsupervisor")
+	return node.RunCommand("docker stop volsupervisor")
 }
 
-func startVolmaster(node vagrantssh.TestbedNode) error {
+func startApiserver(node vagrantssh.TestbedNode) error {
 	log.Infof("Starting the apiserver on %q", node.GetName())
-	err := node.RunCommandBackground("(sudo -E nohup `which apiserver` </dev/null 2>&1 | sudo tee -a /tmp/apiserver.log) &")
-	log.Infof("Waiting for apiserver startup on %q", node.GetName())
-	time.Sleep(10 * time.Millisecond)
-	return err
+	return node.RunCommand("docker start apiserver")
 }
 
-func stopVolmaster(node vagrantssh.TestbedNode) error {
+func stopApiserver(node vagrantssh.TestbedNode) error {
 	log.Infof("Stopping the apiserver on %q", node.GetName())
-	return node.RunCommand("sudo pkill apiserver")
+	return node.RunCommand("docker stop apiserver")
 }
 
 func startVolplugin(node vagrantssh.TestbedNode) error {
 	log.Infof("Starting the volplugin on %q", node.GetName())
-	defer time.Sleep(10 * time.Millisecond)
-
-	// FIXME this is hardcoded because it's simpler. If we move to
-	// multimaster or change the monitor subnet, we will have issues.
-	return node.RunCommandBackground("(sudo -E `which volplugin` 2>&1 | sudo tee -a /tmp/volplugin.log) &")
+	return node.RunCommand("docker start volplugin")
 }
 
 func stopVolplugin(node vagrantssh.TestbedNode) error {
 	log.Infof("Stopping the volplugin on %q", node.GetName())
-	return node.RunCommand("sudo pkill volplugin")
+	return node.RunCommand("docker stop volplugin")
 }
 
 func waitDockerizedServicesHost(node vagrantssh.TestbedNode) error {
@@ -427,7 +402,7 @@ func restartDockerHost(node vagrantssh.TestbedNode) error {
 	log.Infof("Restarting docker on %q", node.GetName())
 	// note that for all these restart tasks we error out quietly to avoid other
 	// hosts being cleaned up
-	node.RunCommand("sudo service docker restart")
+	//node.RunCommand("sudo service docker restart")
 	return nil
 }
 
@@ -461,16 +436,6 @@ func (s *systemtestSuite) clearContainers() error {
 	return s.vagrant.IterateNodes(s.clearContainerHost)
 }
 
-func (s *systemtestSuite) clearVolumeHost(node vagrantssh.TestbedNode) error {
-	log.Infof("Clearing volumes on %q", node.GetName())
-	node.RunCommand("docker volume ls | tail -n +2 | awk '{ print $2 }' | xargs docker volume rm")
-	return nil
-}
-
-func (s *systemtestSuite) clearVolumes() error {
-	return s.vagrant.IterateNodes(s.clearVolumeHost)
-}
-
 func (s *systemtestSuite) clearRBD() error {
 	if !cephDriver() {
 		return nil
@@ -478,19 +443,46 @@ func (s *systemtestSuite) clearRBD() error {
 
 	log.Info("Clearing rbd images")
 
-	s.vagrant.IterateNodes(func(node vagrantssh.TestbedNode) error {
-		s.vagrant.GetNode(node.GetName()).RunCommandWithOutput("for img in $(sudo rbd showmapped | tail -n +2 | awk \"{ print \\$5 }\"); do sudo umount $img; sudo umount -f $img; done")
+	err := s.vagrant.IterateNodes(func(node vagrantssh.TestbedNode) error {
+		out, err := s.rbd("showmapped | tail -n +2 | awk \"{ print \\$5 }\"")
+		if err != nil {
+			log.Error(out, err)
+			return err
+		}
+
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			out, err := s.mon0cmd(fmt.Sprintf("sudo umount %s; sudo umount -f %s", line, line))
+			if err != nil {
+				log.Error(out, err)
+				return err
+			}
+			out, err = s.rbd(fmt.Sprintf("unmap %s", line))
+			if err != nil {
+				log.Error(out, err)
+				return err
+			}
+		}
+
 		return nil
 	})
 
-	s.vagrant.IterateNodes(func(node vagrantssh.TestbedNode) error {
-		s.vagrant.GetNode(node.GetName()).RunCommandWithOutput("for img in $(sudo rbd showmapped | tail -n +2 | awk \"{ print \\$5 }\"); do sudo umount $img; sudo rbd unmap $img; done")
-		return nil
-	})
-
-	out, err := s.vagrant.GetNode("mon0").RunCommandWithOutput("for img in $(sudo rbd ls); do sudo rbd snap purge $img; sudo rbd rm $img; done")
 	if err != nil {
-		log.Info(out)
+		return err
+	}
+
+	out, err := s.rbd("ls")
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, line := range lines {
+		s.rbd(fmt.Sprintf("snap purge %s", line))
+		s.rbd(fmt.Sprintf("rm %s", line))
 	}
 
 	return err

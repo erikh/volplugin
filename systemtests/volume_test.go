@@ -80,7 +80,7 @@ func (s *systemtestSuite) TestVolumeMultiCreateThroughDocker(c *C) {
 
 	c.Assert(s.createVolume("mon0", "policy1", "test", nil), IsNil)
 
-	out, err := s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd ls")
+	out, err := s.rbd("ls")
 	c.Assert(err, IsNil)
 	c.Assert(strings.TrimSpace(out), Equals, "policy1.test")
 

@@ -1,7 +1,6 @@
 package systemtests
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	. "testing"
@@ -41,52 +40,6 @@ func (s *systemtestSuite) SetUpSuite(c *C) {
 	s.vagrant = vagrantssh.Vagrant{}
 	c.Assert(s.vagrant.Setup(false, "", 3), IsNil)
 
-	stopServices := []string{"volplugin", "apiserver", "volsupervisor"}
-	startServices := []string{"ceph.target", "etcd"}
-
-	/* FIXME too volatile. The intent was to ensure ceph was not a factor in some
-	   of our work. I'm not sure this is as necessary now, but we should do it if
-	   we have the time to do it properly. We'll need better orchestration here.
-
-		if cephDriver() {
-			startServices = append(startServices, "ceph.target")
-		} else {
-			stopServices = append(stopServices, "ceph.target")
-		}
-
-	*/
-
-	nodelen := len(s.vagrant.GetNodes())
-	sync := make(chan struct{}, nodelen)
-
-	for _, service := range stopServices {
-		for _, node := range s.vagrant.GetNodes() {
-			log.Infof("Stopping %q service", service)
-			go func(node vagrantssh.TestbedNode) {
-				node.RunCommand(fmt.Sprintf("sudo systemctl stop %s", service))
-				sync <- struct{}{}
-			}(node)
-		}
-	}
-
-	for i := 0; i < nodelen; i++ {
-		<-sync
-	}
-
-	for _, service := range startServices {
-		for _, node := range s.vagrant.GetNodes() {
-			log.Infof("Starting %q service", service)
-			go func(node vagrantssh.TestbedNode) {
-				node.RunCommand(fmt.Sprintf("sudo systemctl start %s", service))
-				sync <- struct{}{}
-			}(node)
-		}
-	}
-
-	for i := 0; i < nodelen; i++ {
-		<-sync
-	}
-
 	if nfsDriver() {
 		log.Info("NFS Driver detected: configuring exports.")
 		c.Assert(s.createExports(), IsNil)
@@ -99,7 +52,7 @@ func (s *systemtestSuite) SetUpSuite(c *C) {
 	c.Assert(s.clearContainers(), IsNil)
 	c.Assert(s.restartDocker(), IsNil)
 	c.Assert(s.waitDockerizedServices(), IsNil)
-	c.Assert(s.pullDebian(), IsNil)
+	c.Assert(s.pullImage(), IsNil)
 	c.Assert(s.rebootstrap(), IsNil)
 
 	out, err := s.uploadIntent("policy1", "policy1")

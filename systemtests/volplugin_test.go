@@ -43,10 +43,10 @@ func (s *systemtestSuite) TestVolpluginLockFreeOperation(c *C) {
 }
 
 func (s *systemtestSuite) TestVolpluginVolmasterDown(c *C) {
-	c.Assert(stopVolmaster(s.vagrant.GetNode("mon0")), IsNil)
+	c.Assert(stopApiserver(s.vagrant.GetNode("mon0")), IsNil)
 	c.Assert(stopVolplugin(s.vagrant.GetNode("mon0")), IsNil)
 	c.Assert(startVolplugin(s.vagrant.GetNode("mon0")), IsNil)
-	c.Assert(startVolmaster(s.vagrant.GetNode("mon0")), IsNil)
+	c.Assert(startApiserver(s.vagrant.GetNode("mon0")), IsNil)
 	c.Assert(s.createVolume("mon0", "policy1", "test", nil), IsNil)
 }
 
@@ -91,14 +91,12 @@ func (s *systemtestSuite) TestVolpluginCrashRestart(c *C) {
 	c.Assert(stopVolplugin(s.vagrant.GetNode("mon0")), IsNil)
 	time.Sleep(5 * time.Second)
 	c.Assert(startVolplugin(s.vagrant.GetNode("mon0")), IsNil)
-	c.Assert(waitForVolplugin(s.vagrant.GetNode("mon0")), IsNil)
 	c.Assert(s.createVolume("mon1", "policy1", "test", nil), IsNil)
 	_, err = s.dockerRun("mon1", false, true, "policy1/test", "sleep 10m")
 	c.Assert(err, NotNil)
 
 	c.Assert(stopVolplugin(s.vagrant.GetNode("mon0")), IsNil)
 	c.Assert(startVolplugin(s.vagrant.GetNode("mon0")), IsNil)
-	c.Assert(waitForVolplugin(s.vagrant.GetNode("mon0")), IsNil)
 
 	_, err = s.volcli("volume runtime upload policy1/test < /testdata/iops1.json")
 	c.Assert(err, IsNil)

@@ -19,13 +19,13 @@ func (s *systemtestSuite) TestVolsupervisorSnapshotSchedule(c *C) {
 
 	time.Sleep(4 * time.Second)
 
-	out, err := s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err := s.rbd("snap ls policy1.foo")
 	c.Assert(err, IsNil)
 	c.Assert(len(strings.Split(out, "\n")) > 2, Equals, true)
 
 	time.Sleep(15 * time.Second)
 
-	out, err = s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err = s.rbd("snap ls policy1.foo")
 	c.Assert(err, IsNil)
 	mylen := len(strings.Split(out, "\n"))
 	c.Assert(mylen, Not(Equals), 0)
@@ -44,14 +44,14 @@ func (s *systemtestSuite) TestVolsupervisorStopStartSnapshot(c *C) {
 
 	time.Sleep(4 * time.Second)
 
-	out, err := s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err := s.rbd("snap ls policy1.foo")
 	c.Assert(err, IsNil)
 	c.Assert(len(strings.Split(out, "\n")) > 2, Equals, true)
 
 	out, err = s.volcli("volume remove policy1/foo")
 	c.Assert(err, IsNil)
 
-	_, err = s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err = s.rbd("snap ls policy1.foo")
 	c.Assert(err, NotNil)
 
 	_, err = s.uploadIntent("policy1", "nosnap")
@@ -64,7 +64,7 @@ func (s *systemtestSuite) TestVolsupervisorStopStartSnapshot(c *C) {
 
 	time.Sleep(4 * time.Second)
 
-	out, err = s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err = s.rbd("snap ls policy1.foo")
 	c.Assert(err, IsNil)
 	c.Assert(len(out), Equals, 0)
 }
@@ -81,7 +81,7 @@ func (s *systemtestSuite) TestVolsupervisorRestart(c *C) {
 
 	time.Sleep(4 * time.Second)
 
-	out, err := s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err := s.rbd("snap ls policy1.foo")
 	c.Assert(err, IsNil)
 
 	count := len(strings.Split(out, "\n"))
@@ -89,11 +89,10 @@ func (s *systemtestSuite) TestVolsupervisorRestart(c *C) {
 
 	c.Assert(stopVolsupervisor(s.vagrant.GetNode("mon0")), IsNil)
 	c.Assert(startVolsupervisor(s.vagrant.GetNode("mon0")), IsNil)
-	c.Assert(waitForVolsupervisor(s.vagrant.GetNode("mon0")), IsNil)
 
 	time.Sleep(10 * time.Second)
 
-	out, err = s.vagrant.GetNode("mon0").RunCommandWithOutput("sudo rbd snap ls policy1.foo")
+	out, err = s.rbd("snap ls policy1.foo")
 	c.Assert(err, IsNil)
 	count2 := len(strings.Split(out, "\n"))
 	c.Assert(count2 > count, Equals, true)

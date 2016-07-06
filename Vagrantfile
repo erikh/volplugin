@@ -96,6 +96,8 @@ end
 
 SUBNET = random_subnet
 
+puts "Subnet: #{SUBNET}"
+
 if ENV["BIG"]
   memory = 8192
 end

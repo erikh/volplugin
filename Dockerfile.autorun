@@ -1,7 +1,8 @@
 FROM docker
 
 ADD systemtests/testdata/ceph/policy1.json /policy.json
-ADD systemtests/testdata/globals/docker.json /global.json
+ADD systemtests/testdata/globals/global1.json /global.json
+ADD build/scripts/bootstrap-stage2.sh /bootstrap.sh
 ADD build/scripts/autorun-docker.sh /run-docker.sh
 RUN chmod +x /run-docker.sh
 CMD /run-docker.sh
