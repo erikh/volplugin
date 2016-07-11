@@ -6,8 +6,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+<<<<<<< HEAD
 
 	. "gopkg.in/check.v1"
+=======
+>>>>>>> 7aab932... Removed unnecessary sleep
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/contiv/vagrantssh"
@@ -20,6 +23,7 @@ func (s *systemtestSuite) TestBatteryMultiMountSameHost(c *C) {
 func (s *systemtestSuite) BatteryMultiMountSameHost(c *C, isUnlocked string) {
 	totalIterations := 5
 	threadCount := 15
+	totalMounts := 5
 
 	for i := 0; i < totalIterations; i++ {
 		syncChan := make(chan struct{}, threadCount)
@@ -28,19 +32,29 @@ func (s *systemtestSuite) BatteryMultiMountSameHost(c *C, isUnlocked string) {
 		for workerID := 0; workerID < threadCount; workerID++ {
 			go func(volume string, workerID int) {
 				defer func() { syncChan <- struct{}{} }()
-				fqVolName := fqVolume(volume)
+				fqVolName := fqVolume("policy1", volume)
 				c.Assert(s.createVolume("mon0", fqVolName, map[string]string{"unlocked": isUnlocked}), IsNil)
 				containerID, err := s.dockerRun("mon0", false, true, fqVolName, "sleep 10m")
 				c.Assert(err, IsNil, Commentf("Output: %s", containerID))
-				containerID2, err := s.dockerRun("mon0", false, true, fqVolName, "sleep 10m")
-				if unlocked, _ := strconv.ParseBool(isUnlocked); unlocked {
-					log.Debug(containerID2, err)
-					c.Assert(err, IsNil, Commentf("Output: %s", containerID2))
-				} else { // locked volumes
-					log.Debugf("Volume %s already mounted in container %s", volName, containerID)
-					c.Assert(err, NotNil)
-				}
 
+				for x := 0; x < totalMounts; x++ {
+<<<<<<< HEAD
+					id, err := s.dockerRun("mon0", false, true, fqVolName, "sleep 10m")
+=======
+					ID, err := s.dockerRun("mon0", false, true, fmt.Sprintf("policy1/test%02d", workerID), "sleep 10m")
+>>>>>>> 7aab932... Removed unnecessary sleep
+					if unlocked, _ := strconv.ParseBool(isUnlocked); unlocked {
+						c.Assert(err, IsNil, Commentf("Output: %s", id))
+						dockerRmOut, err := s.mon0cmd(fmt.Sprintf("docker rm -f %s", strings.TrimSpace(id)))
+						if err != nil {
+							log.Error(strings.TrimSpace(dockerRmOut))
+						}
+						c.Assert(err, IsNil)
+					} else { // locked volumes
+						log.Debug("Volume %s already mounted in container %s", fqVolName, containerID)
+						c.Assert(err, NotNil)
+					}
+				}
 				if cephDriver() {
 					_, err = s.mon0cmd(fmt.Sprintf("mount | grep rbd | grep -q %s", strings.Join([]strings{"policy1", volName}, ".")))
 					c.Assert(err, IsNil)
