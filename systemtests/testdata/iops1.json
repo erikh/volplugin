@@ -1,6 +1,6 @@
 {
   "rate-limit": {
-    "write-bps": 1000,
-    "read-bps": 10
+    "write-bps": 0,
+    "read-bps":0
   }
 }
