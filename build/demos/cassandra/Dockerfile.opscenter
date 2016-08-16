@@ -1,0 +1,10 @@
+FROM centos:7
+
+COPY start-opscenter.sh /start.sh
+
+ADD datastax.repo /etc/yum.repos.d/datastax.repo
+
+RUN yum install epel-release -y
+RUN yum install -y opscenter
+
+CMD /start.sh

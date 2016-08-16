@@ -1,0 +1,21 @@
+{ 
+  "name": "test1",
+  "backends": {
+    "crud": "ceph",
+    "mount": "ceph",
+    "snapshot": "ceph"
+  },
+  "driver": {
+    "pool": "rbd"
+  },
+  "create": {
+    "size": "1G"
+  },
+  "runtime": {
+    "snapshots": true,
+    "snapshot": {
+      "frequency": "1m",
+      "keep": 20
+    }
+  }
+}

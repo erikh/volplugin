@@ -90,8 +90,11 @@ run: build
 	sleep 10
 	vagrant ssh mon0 -c 'volcli global upload < /testdata/globals/global1.json'
 
+# doing swarm here
 run-etcd:
-	sudo systemctl start etcd
+	sudo systemctl restart etcd
+	sleep 2
+	sudo systemctl restart swarm
 
 docker-image:
 	docker build -t contiv/volplugin .
