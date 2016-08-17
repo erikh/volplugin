@@ -17,14 +17,34 @@ fi
 set -x
 
 docker run --net host --name apiserver \
-  --privileged -it -d \
-  -v /dev:/dev \
-  -v /etc/ceph:/etc/ceph \
-  -v /var/lib/ceph:/var/lib/ceph \
-  -v /lib/modules:/lib/modules:ro \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /mnt:/mnt:shared \
-  contiv/volplugin apiserver
+    --privileged -i -d \
+    -v /dev:/dev \
+    -v /etc/ceph:/etc/ceph \
+    -v /var/lib/ceph:/var/lib/ceph \
+    -v /lib/modules:/lib/modules:ro \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /mnt:/mnt:shared \
+    contiv/volplugin apiserver
+
+docker run --net host --name volsupervisor \
+    -id --privileged \
+    -v /lib/modules:/lib/modules:ro \
+    -v /etc/ceph:/etc/ceph \
+    -v /var/lib/ceph:/var/lib/ceph \
+    contiv/volplugin volsupervisor
+
+docker run --net host --name volplugin \
+    --privileged -i -d \
+    -v /dev:/dev \
+    -v /lib/modules:/lib/modules:ro \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /run/docker/plugins:/run/docker/plugins \
+    -v /mnt:/mnt:shared \
+    -v /etc/ceph:/etc/ceph \
+    -v /var/lib/ceph:/var/lib/ceph \
+    -v /var/run/ceph:/var/run/ceph \
+    -v /sys/fs/cgroup:/sys/fs/cgroup \
+    contiv/volplugin volplugin
 
 set +x
 
@@ -36,27 +56,3 @@ then
   docker exec -i apiserver volcli policy upload policy1 < /policy.json
   docker exec -i apiserver volcli global upload < /global.json
 fi
-
-set -x
-
-docker run --net host --name volsupervisor \
-  -itd --privileged \
-  -v /lib/modules:/lib/modules:ro \
-  -v /etc/ceph:/etc/ceph \
-  -v /var/lib/ceph:/var/lib/ceph \
-  contiv/volplugin volsupervisor
-
-set +x
-sleep 1
-set -x
-
-docker run --net host --name volplugin \
-  --privileged -it -d \
-  -v /dev:/dev \
-  -v /lib/modules:/lib/modules:ro \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /run/docker/plugins:/run/docker/plugins \
-  -v /mnt:/mnt:shared \
-  -v /etc/ceph:/etc/ceph \
-  -v /var/lib/ceph:/var/lib/ceph \
-  contiv/volplugin volplugin
