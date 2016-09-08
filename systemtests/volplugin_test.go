@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 
 	. "gopkg.in/check.v1"
 )
@@ -151,13 +151,13 @@ func (s *systemtestSuite) TestVolpluginHostLabel(c *C) {
 	defer s.purgeVolume("mon0", volName)
 	defer s.mon0cmd("docker rm -f " + out)
 
-	ut := &config.UseMount{}
+	ut := &db.Use{}
 
 	// we know the pool is rbd here, so cheat a little.
 	out, err = s.volcli("use get " + volName)
 	c.Assert(err, IsNil, Commentf(out))
 	c.Assert(json.Unmarshal([]byte(out), ut), IsNil, Commentf(out))
-	c.Assert(ut.Hostname, Equals, "quux")
+	c.Assert(ut.Owner(), Equals, "quux")
 }
 
 func (s *systemtestSuite) TestVolpluginMountPath(c *C) {
@@ -177,9 +177,6 @@ func (s *systemtestSuite) TestVolpluginMountPath(c *C) {
 }
 
 func (s *systemtestSuite) TestVolpluginRestartMultiMount(c *C) {
-	_, err := s.mon0cmd("sudo truncate -s0 /tmp/volplugin.log")
-	c.Assert(err, IsNil)
-
 	volName := fqVolume("policy1", genRandomVolume())
 
 	c.Assert(s.createVolume("mon0", volName, map[string]string{"unlocked": "true"}), IsNil)
@@ -204,7 +201,7 @@ func (s *systemtestSuite) TestVolpluginRestartMultiMount(c *C) {
 	errout, err = s.mon0cmd(fmt.Sprintf("docker kill -s KILL '%s' && sleep 1 && docker rm '%s'", out2, out2))
 	c.Assert(err, IsNil, Commentf(errout))
 
-	errout, err = s.mon0cmd("grep 500 /tmp/volplugin.log")
+	errout, err = s.mon0cmd("docker logs volplugin | grep 500")
 	c.Assert(err, NotNil, Commentf(errout))
 }
 

@@ -1,9 +1,6 @@
 package helpers
 
 import (
-	"strings"
-	"sync"
-
 	"github.com/contiv/errored"
 	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/db/jsonio"
@@ -88,74 +85,6 @@ func WrapGet(c db.Client, obj db.Entity, fun func(string) (string, []byte, error
 			return err
 		}
 	}
-
-	return obj.Validate()
-}
-
-// WrapDelete wraps deletes similar in fashion to WrapGet and WrapSet.
-func WrapDelete(c db.Client, obj db.Entity, fun func(string) error) error {
-	if obj.Hooks().PreDelete != nil {
-		if err := obj.Hooks().PreDelete(c, obj); err != nil {
-			return errors.EtcdToErrored(err)
-		}
-	}
-
-	path, err := obj.Path()
-	if err != nil {
-		return err
-	}
-
-	if err := fun(path); err != nil {
-		return err
-	}
-
-	if obj.Hooks().PostDelete != nil {
-		if err := obj.Hooks().PostDelete(c, obj); err != nil {
-			return errors.EtcdToErrored(err)
-		}
-	}
-
-	return nil
-}
-
-// TrimPath removes the prefix from a key, and removes leading and trailing slashes.
-func TrimPath(c db.Client, key string) string {
-	return strings.Trim(strings.TrimPrefix(strings.Trim(key, "/"), c.Prefix()), "/")
-}
-
-// WrapWatch wraps watch calls in each client.
-func WrapWatch(c db.Client, obj db.Entity, path string, recursive bool, watchers map[string]chan struct{}, mutex *sync.Mutex, fun func(wi WatchInfo)) (chan db.Entity, chan error) {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	stopChan := make(chan struct{})
-	retChan := make(chan db.Entity)
-	errChan := make(chan error)
-
-	wi := WatchInfo{
-		Path:       path,
-		Object:     obj,
-		Recursive:  recursive,
-		StopChan:   stopChan,
-		ReturnChan: retChan,
-		ErrorChan:  errChan,
-	}
-
-	go fun(wi)
-
-	_, ok := watchers[path]
-	if ok {
-		close(watchers[path])
-	}
-	watchers[path] = stopChan
-
-	return retChan, errChan
-}
-
-// WatchStop stops a watch for a given object.
-func WatchStop(c db.Client, path string, watchers map[string]chan struct{}, mutex *sync.Mutex) error {
-	mutex.Lock()
-	defer mutex.Unlock()
 	stopChan, ok := watchers[path]
 	if !ok {
 		return errors.InvalidDBPath.Combine(errored.Errorf("missing key %v during watch", path))
@@ -172,7 +101,7 @@ func WatchStop(c db.Client, path string, watchers map[string]chan struct{}, mute
 func ReadAndSet(c db.Client, obj db.Entity, key string, value []byte) (db.Entity, error) {
 	copy := obj.Copy()
 
-	if err := jsonio.Read(copy, []byte(value)); err != nil {
+	if err := jsonio.Read(copy, value); err != nil {
 		// This is kept this way so a buggy policy won't break listing all of them
 		return nil, errored.Errorf("Received error retrieving value at path %q: %v", key, err)
 	}

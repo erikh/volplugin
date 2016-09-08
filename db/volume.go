@@ -12,48 +12,59 @@ import (
 	"github.com/contiv/volplugin/storage/backend"
 )
 
+func (n *NamedVolume) String() string {
+	return path.Join(n.PolicyName, n.VolumeName)
+}
+
 // NewVolume constructs a new volume given the policy and volume parameters.
 func NewVolume(policy, volume string) *Volume {
-	return &Volume{PolicyName: policy, VolumeName: volume}
+	return &Volume{policyName: policy, volumeName: volume}
+}
+
+// Named converts the *Volume to a *NamedVolume. See db/structs.go.
+func (v *Volume) Named() *NamedVolume {
+	return &NamedVolume{PolicyName: v.policyName, VolumeName: v.volumeName, Volume: v}
 }
 
 // CreateVolume creates a volume from parameters, including the policy to copy.
-func CreateVolume(vr *VolumeRequest) (*Volume, error) {
-	if vr.Name == "" {
+func CreateVolume(policy *Policy, name string, opts map[string]string) (*Volume, error) {
+	if name == "" {
 		return nil, errored.Errorf("Volume name was empty").Combine(errors.InvalidVolume)
 	}
 
-	if vr.Policy == nil {
-		return nil, errored.Errorf("Policy for volume %q was nil", vr.Name).Combine(errors.InvalidVolume)
+	if policy == nil {
+		return nil, errored.Errorf("Policy for volume %q was invalid", name).Combine(errors.InvalidVolume)
 	}
 
 	var mount string
 
-	if vr.Options != nil {
-		mount = vr.Options["mount"]
-		delete(vr.Options, "mount")
+	if opts != nil {
+		mount = opts["mount"]
+		delete(opts, "mount")
 	}
 
-	if err := merge.Opts(vr.Policy, vr.Options); err != nil {
+	tmp := *policy
+
+	if err := merge.Opts(&tmp, opts); err != nil {
 		return nil, err
 	}
 
-	if vr.Policy.DriverOptions == nil {
-		vr.Policy.DriverOptions = map[string]string{}
+	if tmp.DriverOptions == nil {
+		tmp.DriverOptions = map[string]string{}
 	}
 
-	if err := vr.Policy.Validate(); err != nil {
+	if err := tmp.Validate(); err != nil {
 		return nil, err
 	}
 
 	vc := &Volume{
-		Backends:       vr.Policy.Backends,
-		DriverOptions:  vr.Policy.DriverOptions,
-		CreateOptions:  vr.Policy.CreateOptions,
-		RuntimeOptions: vr.Policy.RuntimeOptions,
-		Unlocked:       vr.Policy.Unlocked,
-		PolicyName:     vr.Policy.Name,
-		VolumeName:     vr.Name,
+		Backends:       tmp.Backends,
+		DriverOptions:  tmp.DriverOptions,
+		CreateOptions:  tmp.CreateOptions,
+		RuntimeOptions: tmp.RuntimeOptions,
+		Unlocked:       tmp.Unlocked,
+		policyName:     tmp.name,
+		volumeName:     name,
 		MountSource:    mount,
 	}
 
@@ -68,6 +79,12 @@ func CreateVolume(vr *VolumeRequest) (*Volume, error) {
 	return vc, nil
 }
 
+// SetName is used in snapshot copies; where the volume and policy will diverge
+// to create a new volume using the same policy.
+func (v *Volume) SetName(name string) {
+	v.volumeName = name
+}
+
 // SetKey implements the entity interface.
 func (v *Volume) SetKey(key string) error {
 	suffix := strings.Trim(strings.TrimPrefix(strings.Trim(key, "/"), rootVolume), "/")
@@ -80,8 +97,8 @@ func (v *Volume) SetKey(key string) error {
 		return errors.InvalidDBPath.Combine(errored.Errorf("One part of key %v in Volume was empty: %v", key, parts))
 	}
 
-	v.PolicyName = parts[0]
-	v.VolumeName = parts[1]
+	v.policyName = parts[0]
+	v.volumeName = parts[1]
 
 	return v.RuntimeOptions.SetKey(suffix)
 }
@@ -93,18 +110,18 @@ func (v *Volume) Prefix() string {
 
 // Path provides the path to this volumes data store.
 func (v *Volume) Path() (string, error) {
-	if v.PolicyName == "" || v.VolumeName == "" {
+	if v.policyName == "" || v.volumeName == "" {
 		return "", errors.InvalidVolume.Combine(errored.New("Volume or policy name is missing"))
 	}
 
-	return strings.Join([]string{v.Prefix(), v.PolicyName, v.VolumeName}, "/"), nil
+	return strings.Join([]string{v.Prefix(), v.policyName, v.volumeName}, "/"), nil
 }
 
 func (v *Volume) postGetHook(c Client, obj Entity) error {
 	vol := obj.(*Volume)
 	ro := vol.RuntimeOptions // pointer
-	ro.policyName = vol.PolicyName
-	ro.volumeName = vol.VolumeName
+	ro.policyName = vol.policyName
+	ro.volumeName = vol.volumeName
 	return c.Get(ro)
 }
 
@@ -116,17 +133,22 @@ func (v *Volume) preSetHook(c Client, obj Entity) error {
 
 	vol := obj.(*Volume)
 	ro := vol.RuntimeOptions // pointer
-	ro.policyName = vol.PolicyName
-	ro.volumeName = vol.VolumeName
+	ro.policyName = vol.policyName
+	ro.volumeName = vol.volumeName
 	return c.Set(ro)
+}
+
+func (v *Volume) preDeleteHook(c Client, obj Entity) error {
+	return c.Delete(obj.(*Volume).RuntimeOptions)
 }
 
 // Hooks provides hooks into the volume CRUD lifecycle. Currently this is used
 // to split runtime parameters out from the rest of the volume information.
 func (v *Volume) Hooks() *Hooks {
 	return &Hooks{
-		PostGet: v.postGetHook,
-		PreSet:  v.preSetHook,
+		PostGet:   v.postGetHook,
+		PreSet:    v.preSetHook,
+		PreDelete: v.preDeleteHook,
 	}
 }
 
@@ -148,6 +170,10 @@ func (v *Volume) Copy() Entity {
 
 // Validate validates the structure of the volume.
 func (v *Volume) Validate() error {
+	if v.Backends == nil {
+		v.Backends = &BackendDrivers{}
+	}
+
 	if err := validateJSON(VolumeSchema, v); err != nil {
 		return errors.ErrJSONValidation.Combine(err)
 	}
@@ -217,5 +243,5 @@ func (v *Volume) ToDriverOptions(timeout time.Duration) (storage.DriverOptions, 
 }
 
 func (v *Volume) String() string {
-	return path.Join(v.PolicyName, v.VolumeName)
+	return path.Join(v.policyName, v.volumeName)
 }

@@ -22,7 +22,7 @@ import (
 func (s *testSuite) TestDump(c *C) {
 	copy := testPolicies["basic"].Copy()
 	for i := 0; i < 10; i++ {
-		copy.(*db.Policy).Name = fmt.Sprintf("test%d", i)
+		copy.SetKey(fmt.Sprintf("test%d", i))
 		c.Assert(s.client.Set(copy), IsNil)
 	}
 
@@ -65,7 +65,7 @@ func (s *testSuite) TestDump(c *C) {
 				c.Assert(err, IsNil)
 
 				copy := testPolicies["basic"].Copy()
-				copy.(*db.Policy).Name = fmt.Sprintf("test%d", i)
+				copy.SetKey(fmt.Sprintf("test%d", i))
 				c.Assert(s.client.Get(copy), IsNil)
 
 				content, err := jsonio.Write(copy)

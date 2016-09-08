@@ -27,7 +27,6 @@ var (
 		"title": "Policy config validation",
 		"type": "object",
 		"properties": {
-			"name": {"type": "string", "minLength": 1, "pattern": "^[^./]+$" },
 			"backends": {
 				"type": "object",
 				"properties": {
@@ -43,7 +42,7 @@ var (
 			{ "required": [ "backend" ] },
 			{ "required": [ "backends" ] }
 		],
-		"required": [ "name" ]
+		"required": []
 	}`
 
 	//VolumeSchema defines the json schema for volume
@@ -51,8 +50,6 @@ var (
 		"title": "Volume config validation",
 		"type": "object",
 		"properties": {
-			"name": { "type": "string", "minLength": 1, "pattern": "^[^./]+$" },
-			"policy": { "type": "string", "minLength": 1, "pattern": "^[^./]+$" },
 			"backends": {
 				"type": "object",
 				"properties": {
@@ -63,6 +60,6 @@ var (
 				"required": [ "mount" ]
 			}
 		},
-		"required": [ "name", "policy", "backends" ]
+		"required": ["backends" ]
 	}`
 )

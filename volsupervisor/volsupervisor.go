@@ -8,48 +8,60 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/codegangsta/cli"
+	"github.com/hashicorp/consul/api"
 	wait "github.com/jbeda/go-wait"
 
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/db/impl/consul"
+	"github.com/contiv/volplugin/db/impl/etcd"
 	"github.com/contiv/volplugin/info"
-	"github.com/contiv/volplugin/lock"
-	"github.com/contiv/volplugin/watch"
 )
 
 // DaemonConfig is the top-level configuration for the daemon. It is used by
 // the cli package in volplugin/volplugin.
 type DaemonConfig struct {
-	Global   *config.Global
-	Config   *config.Client
+	Global   *db.Global
+	Client   db.Client
 	Hostname string
 }
 
 // Daemon is the top-level entrypoint for the volsupervisor from the CLI.
 func Daemon(ctx *cli.Context) {
-	cfg, err := config.NewClient(ctx.String("prefix"), ctx.StringSlice("etcd"))
+	var client db.Client
+	var err error
+
+	switch ctx.String("store") {
+	case "etcd":
+		client, err = etcd.NewClient(ctx.StringSlice("store-url"), ctx.String("prefix"))
+	case "consul":
+		client, err = consul.NewClient(&api.Config{Address: ctx.StringSlice("store-url")[0]}, ctx.String("prefix"))
+	default:
+		logrus.Fatalf("Invalid cluster store %q", ctx.String("store"))
+	}
+
 	if err != nil {
-		logrus.Fatal(err)
+		logrus.Fatalf("Could not establish link to %q: %v", ctx.String("store"), err)
 	}
 
 retry:
-	global, err := cfg.GetGlobal()
-	if err != nil {
+	global := db.NewGlobal()
+	if err := client.Get(global); err != nil {
 		logrus.Errorf("Could not retrieve global configuration: %v. Retrying in 1 second", err)
 		time.Sleep(time.Second)
 		goto retry
 	}
 
-	dc := &DaemonConfig{Config: cfg, Global: global, Hostname: ctx.String("host-label")}
+	dc := &DaemonConfig{Client: client, Global: global, Hostname: ctx.String("host-label")}
 	dc.setDebug()
 
-	globalChan := make(chan *watch.Watch)
-	dc.Config.WatchGlobal(globalChan)
-	go dc.watchAndSetGlobal(globalChan)
+	objChan, errChan := dc.Client.Watch(global)
+	go dc.watchAndSetGlobal(objChan, errChan)
 	go info.HandleDebugSignal()
 
-	stopChan, err := lock.NewDriver(dc.Config).AcquireWithTTLRefresh(&config.UseVolsupervisor{Hostname: dc.Hostname}, dc.Global.TTL, dc.Global.Timeout)
+	uc := db.NewVolsupervisor(dc.Hostname)
+	stopChan, err := dc.Client.AcquireAndRefresh(uc, dc.Global.TTL)
 	if err != nil {
-		logrus.Fatal("Could not start volsupervisor: already in use")
+		logrus.Fatalf("Could not start volsupervisor: failed to acquire lock: %v", err)
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -58,7 +70,6 @@ retry:
 		<-sigChan
 		logrus.Infof("Removing volsupervisor global lock; waiting %v for lock to clear", dc.Global.TTL)
 		stopChan <- struct{}{}
-		time.Sleep(wait.Jitter(dc.Global.TTL+time.Second, 0)) // give us enough time to try to clear the lock
 		os.Exit(0)
 	}()
 
@@ -77,10 +88,16 @@ retry:
 	dc.loop()
 }
 
-func (dc *DaemonConfig) watchAndSetGlobal(globalChan chan *watch.Watch) {
+func (dc *DaemonConfig) watchAndSetGlobal(globalChan chan db.Entity, errChan chan error) {
 	for {
-		dc.Global = (<-globalChan).Config.(*config.Global)
-		dc.setDebug()
+		select {
+		case err := <-errChan:
+			logrus.Errorf("Could not receive global configuration: %v", err)
+			time.Sleep(100 * time.Millisecond) // throttle
+		case global := <-globalChan:
+			dc.Global = global.(*db.Global)
+			dc.setDebug()
+		}
 	}
 }
 

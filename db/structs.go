@@ -1,13 +1,40 @@
 package db
 
-import (
-	"time"
-)
+import "time"
+
+/*
+ * The reason these next few structs exist is because due to how the db library works, we
+ * cannot store primary keys in the API responses that come directly from etcd and
+ * consul. They will be overwritten during marshal. Additionally, they are not
+ * required throughout the rest of the system, since the DB library is capable of
+ * populating the key informnation, but passing between API responses,
+ * unfortunately that is not possible to do without having a new struct.
+ */
+
+// NamedPolicy is a named policy; used for API responses.
+type NamedPolicy struct {
+	Name string `json:"name"`
+	*Policy
+}
+
+// NamedVolume is a named volume; used for API responses.
+type NamedVolume struct {
+	PolicyName string `json:"policy"`
+	VolumeName string `json:"volume"`
+	*Volume
+}
+
+// Snapshot is a signaling system to take snapshots. The apiserver sends these
+// siganls, and volsupervisor watches for these signals.
+type Snapshot struct {
+	volume *Volume
+}
 
 // Policy is the configuration of the policy. It includes default
 // information for items such as pool and volume configuration.
 type Policy struct {
-	Name           string            `json:"name"`
+	name string
+
 	Unlocked       bool              `json:"unlocked,omitempty" merge:"unlocked"`
 	CreateOptions  CreateOptions     `json:"create"`
 	RuntimeOptions *RuntimeOptions   `json:"runtime"`
@@ -15,6 +42,12 @@ type Policy struct {
 	FileSystems    map[string]string `json:"filesystems"`
 	Backends       *BackendDrivers   `json:"backends,omitempty"`
 	Backend        string            `json:"backend,omitempty"`
+}
+
+// PolicyRevision is a policy with new paths.
+type PolicyRevision struct {
+	*Policy
+	Revision string
 }
 
 // BackendDrivers is a struct containing all the drivers used under this policy
@@ -28,7 +61,7 @@ type BackendDrivers struct {
 // apiserver or internally. it is the basic representation of a volume.
 type VolumeRequest struct {
 	Name    string
-	Policy  *Policy
+	Policy  string
 	Options map[string]string
 }
 
@@ -40,29 +73,12 @@ type Global struct {
 	MountPath string
 }
 
-// UseMount is the mount locking mechanism for users. Users are hosts,
-// consumers of a volume. Examples of uses are: creating a volume, using a
-// volume, removing a volume, snapshotting a volume. These are supplied in the
-// `Reason` field as text.
-type UseMount struct {
-	Volume   string
-	Hostname string
-	Reason   string
-}
-
-// UseSnapshot is similar to UseMount in that it is a locking mechanism, just
-// for snapshots this time. Taking snapshots can block certain actions such as
-// taking other snapshots or deleting snapshots.
-type UseSnapshot struct {
-	Volume string
-	Reason string
-}
-
 // Volume is the configuration of the policy. It includes pool and
 // snapshot information.
 type Volume struct {
-	PolicyName     string            `json:"policy"`
-	VolumeName     string            `json:"name"`
+	policyName string
+	volumeName string
+
 	Unlocked       bool              `json:"unlocked,omitempty" merge:"unlocked"`
 	DriverOptions  map[string]string `json:"driver"`
 	MountSource    string            `json:"mount" merge:"mount"`

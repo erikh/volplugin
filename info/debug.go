@@ -11,7 +11,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/errored"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 )
 
 func numFileDescriptors() int {
@@ -66,7 +66,7 @@ func HandleDebugSignal() {
 
 // HandleDumpTarballSignal watches for SIGUSR2 and creates a gzipped tarball
 // of the current etcd directories/keys under the "/volplugin" namespace
-func HandleDumpTarballSignal(client *config.Client) {
+func HandleDumpTarballSignal(client db.Client) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGUSR2)
 	for {
@@ -74,11 +74,11 @@ func HandleDumpTarballSignal(client *config.Client) {
 		case <-signals:
 			logrus.Info("received SIGUSR2; dumping etcd namespace to tarball")
 
-			tarballPath, err := client.DumpTarball()
+			tarballPath, err := client.Dump(os.Getenv("TMPDIR"))
 			if err != nil {
-				logrus.Info("Failed to dump etcd namespace: ", err)
+				logrus.Info("Failed to dump db namespace: ", err)
 			} else {
-				logrus.Info("Dumped etcd namespace to ", tarballPath)
+				logrus.Info("Dumped db namespace to ", tarballPath)
 			}
 		}
 	}

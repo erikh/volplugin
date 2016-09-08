@@ -15,7 +15,7 @@ func main() {
 	app := cli.NewApp()
 
 	app.Version = version
-	app.Flags = volcli.GlobalFlags
+	app.GlobalFlags = volcli.GlobalFlags
 	app.Usage = "Command volplugin and ceph infrastructure"
 	app.ArgsUsage = "[subcommand] [arguments]"
 	app.Commands = volcli.Commands

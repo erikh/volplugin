@@ -2,30 +2,33 @@ package api
 
 import (
 	"net/http"
-	"os"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/errored"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/errors"
-	"github.com/contiv/volplugin/lock"
 	"github.com/contiv/volplugin/storage"
 	"github.com/contiv/volplugin/storage/cgroup"
 	"github.com/contiv/volplugin/storage/control"
 )
 
-func (a *API) createVolume(w http.ResponseWriter, volume *config.VolumeRequest, policyObj *config.Policy) func(ld *lock.Driver, ucs []config.UseLocker) error {
-	return func(ld *lock.Driver, ucs []config.UseLocker) error {
+func (a *API) createVolume(w http.ResponseWriter, volume *db.VolumeRequest) func(ucs []db.Lock) error {
+	return func(ucs []db.Lock) error {
 		global := *a.Global
 
-		volConfig, err := a.Client.CreateVolume(volume)
+		policy := db.NewPolicy(volume.Policy)
+		if err := a.Client.Get(policy); err != nil {
+			return errors.NotExists.Combine(errored.Errorf("policy %q not found", volume.Policy)).Combine(err)
+		}
+
+		volConfig, err := db.CreateVolume(policy, volume.Name, volume.Options)
 		if err != nil {
 			return err
 		}
 
 		logrus.Debugf("Volume Create: %#v", *volConfig)
 
-		do, err := control.CreateVolume(policyObj, volConfig, global.Timeout)
+		do, err := control.CreateVolume(policy, volConfig, global.Timeout)
 		if err == errors.NoActionTaken {
 			goto publish
 		}
@@ -42,7 +45,7 @@ func (a *API) createVolume(w http.ResponseWriter, volume *config.VolumeRequest, 
 		}
 
 	publish:
-		if err := a.Client.PublishVolume(volConfig); err != nil && err != errors.Exists {
+		if err := a.Client.Set(volConfig); err != nil && err != errors.Exists {
 			if _, ok := err.(*errored.Error); !ok {
 				return errors.PublishVolume.Combine(err)
 			}
@@ -61,42 +64,21 @@ func (a *API) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if vol, err := a.Client.GetVolume(volume.Policy, volume.Name); err == nil && vol != nil {
-		a.HTTPError(w, errors.Exists)
+	vol := db.NewVolume(volume.Policy, volume.Name)
+
+	if err := a.Client.Get(vol); err == nil {
+		a.HTTPError(w, errors.Exists.Combine(err))
 		return
 	}
 
 	logrus.Infof("Creating volume %s", volume)
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		a.HTTPError(w, errors.GetHostname.Combine(err))
-		return
-	}
-
-	policyObj, err := a.Client.GetPolicy(volume.Policy)
-	if err != nil {
-		a.HTTPError(w, errors.GetPolicy.Combine(errored.New(volume.Policy)).Combine(err))
-		return
-	}
-
-	uc := &config.UseMount{
-		Volume:   volume.String(),
-		Reason:   lock.ReasonCreate,
-		Hostname: hostname,
-	}
-
-	snapUC := &config.UseSnapshot{
-		Volume: volume.String(),
-		Reason: lock.ReasonCreate,
-	}
-
-	global := *a.Global
-
-	err = lock.NewDriver(a.Client).ExecuteWithMultiUseLock(
-		[]config.UseLocker{uc, snapUC},
-		global.Timeout,
-		a.createVolume(w, volume, policyObj),
+	err = db.ExecuteWithMultiUseLock(
+		a.Client,
+		a.createVolume(w, volume),
+		(*a.Global).Timeout,
+		db.NewSnapshotCreate(vol),
+		db.NewCreateOwner(a.Hostname, vol),
 	)
 
 	if err != nil && err != errors.Exists {
@@ -183,7 +165,7 @@ func (a *API) Get(w http.ResponseWriter, r *http.Request) {
 
 // List is the request to obtain a list of the volumes.
 func (a *API) List(w http.ResponseWriter, r *http.Request) {
-	volList, err := a.Client.ListAllVolumes()
+	volList, err := a.Client.List(&db.Volume{})
 	if err != nil {
 		a.HTTPError(w, errors.ListVolume.Combine(err))
 		return
@@ -197,10 +179,10 @@ func (a *API) List(w http.ResponseWriter, r *http.Request) {
 type mountState struct {
 	w          http.ResponseWriter
 	err        error
-	ut         *config.UseMount
+	ut         db.Lock
 	driver     storage.MountDriver
 	driverOpts storage.DriverOptions
-	volConfig  *config.Volume
+	volConfig  *db.Volume
 }
 
 // triggered on any failure during call into mount.
@@ -212,7 +194,7 @@ func (a *API) clearMount(ms mountState) {
 		logrus.Errorf("Failure during unmount after failed mount: %v %v", err, ms.err)
 	}
 
-	if err := a.Lock.ClearLock(ms.ut, (*a.Global).Timeout); err != nil {
+	if err := a.Client.Free(ms.ut, false); err != nil {
 		a.HTTPError(ms.w, errors.RefreshMount.Combine(errored.New(ms.volConfig.String())).Combine(err).Combine(ms.err))
 		return
 	}
@@ -239,19 +221,11 @@ func (a *API) Mount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	volName := volConfig.String()
-	ut := &config.UseMount{
-		Volume:   volName,
-		Reason:   lock.ReasonMount,
-		Hostname: a.Hostname,
-	}
+	ut := db.NewMountOwner(a.Hostname, volConfig)
 
 	if !volConfig.Unlocked {
-		// XXX the only times a use lock cannot be acquired when there are no
-		// previous mounts, is when in locked mode and a mount is held on another
-		// host. So we take an indefinite lock HERE while we calculate whether or not
-		// we already have one.
-		if err := a.Client.PublishUse(ut); err != nil {
-			a.HTTPError(w, errors.LockFailed.Combine(err))
+		if err := a.startTTLRefresh(volConfig); err != nil {
+			a.clearMount(mountState{w, err, ut, driver, driverOpts, volConfig})
 			return
 		}
 	}
@@ -271,7 +245,7 @@ func (a *API) Mount(w http.ResponseWriter, r *http.Request) {
 		}
 
 		logrus.Warnf("Duplicate mount of %q detected: Lock failed", volName)
-		a.HTTPError(w, errors.LockFailed.Combine(errored.Errorf("Duplicate mount")))
+		a.HTTPError(w, errors.LockFailed.Combine(errored.Errorf("Duplicate mount of %q", volName)))
 		return
 	}
 
@@ -290,15 +264,6 @@ func (a *API) Mount(w http.ResponseWriter, r *http.Request) {
 
 	a.MountCollection.Add(mc)
 
-	// Only perform the TTL refresh if the driver is in unlocked mode.
-	if !volConfig.Unlocked {
-		if err := a.startTTLRefresh(volName); err != nil {
-			a.RemoveStopChan(volName)
-			a.clearMount(mountState{w, err, ut, driver, driverOpts, volConfig})
-			return
-		}
-	}
-
 	if err := cgroup.ApplyCGroupRateLimit(volConfig.RuntimeOptions, mc); err != nil {
 		logrus.Errorf("Could not apply cgroups to volume %q", volConfig)
 	}
@@ -313,19 +278,14 @@ func (a *API) Mount(w http.ResponseWriter, r *http.Request) {
 	a.WriteMount(path, w)
 }
 
-func (a *API) startTTLRefresh(volName string) error {
-	ut := &config.UseMount{
-		Volume:   volName,
-		Reason:   lock.ReasonMount,
-		Hostname: a.Hostname,
-	}
-
-	stopChan, err := a.Lock.AcquireWithTTLRefresh(ut, (*a.Global).TTL, (*a.Global).Timeout)
+func (a *API) startTTLRefresh(volConfig *db.Volume) error {
+	ut := db.NewMountOwner(a.Hostname, volConfig)
+	stopChan, err := a.Client.AcquireAndRefresh(ut, (*a.Global).TTL)
 	if err != nil {
 		return err
 	}
 
-	a.AddStopChan(volName, stopChan)
+	a.AddStopChan(volConfig.String(), stopChan)
 
 	return nil
 }
@@ -347,22 +307,6 @@ func (a *API) Unmount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	volName := volConfig.String()
-
-	ut := &config.UseMount{
-		Volume:   volName,
-		Reason:   lock.ReasonMount,
-		Hostname: a.Hostname,
-	}
-
-	if !volConfig.Unlocked {
-		// XXX to doubly ensure we do not UNMOUNT something that is held elsewhere
-		// (presumably because it is mounted THERE instead), we refuse to unmount
-		// anything that doesn't acquire a lock.
-		if err := a.Client.PublishUse(ut); err != nil {
-			a.HTTPError(w, errors.LockFailed.Combine(err))
-			return
-		}
-	}
 
 	if a.MountCounter.Sub(volName) > 0 {
 		logrus.Warnf("Duplicate unmount of %q detected: ignoring and returning success", volName)

@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/storage"
 )
 
@@ -20,7 +20,7 @@ func makeLimit(mc *storage.Mount, limit uint64) []byte {
 
 // ApplyCGroupRateLimit applies cgroups based on the runtime options. Current
 // this is restricted to BPS-related functions.
-func ApplyCGroupRateLimit(ro config.RuntimeOptions, mc *storage.Mount) error {
+func ApplyCGroupRateLimit(ro *db.RuntimeOptions, mc *storage.Mount) error {
 	logrus.Debugf("Apply rate limits: [write: %d] [read: %d] to mount %v", ro.RateLimit.WriteBPS, ro.RateLimit.ReadBPS, mc.Volume)
 
 	opMap := map[string]uint64{

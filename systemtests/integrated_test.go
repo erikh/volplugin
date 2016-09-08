@@ -10,7 +10,7 @@ import (
 	. "gopkg.in/check.v1"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 )
 
 func (s *systemtestSuite) TestIntegratedUseMountLock(c *C) {
@@ -67,7 +67,7 @@ func (s *systemtestSuite) TestIntegratedMultiPool(c *C) {
 	out, err := s.volcli("volume get " + volName)
 	c.Assert(err, IsNil)
 
-	vc := &config.Volume{}
+	vc := &db.Volume{}
 	c.Assert(json.Unmarshal([]byte(out), vc), IsNil)
 	actualSize, err := vc.CreateOptions.ActualSize()
 	c.Assert(err, IsNil)
@@ -96,7 +96,7 @@ func (s *systemtestSuite) TestIntegratedDriverOptions(c *C) {
 	out, err := s.volcli("volume get " + volName)
 	c.Assert(err, IsNil)
 
-	vc := &config.Volume{}
+	vc := &db.Volume{}
 	c.Assert(json.Unmarshal([]byte(out), vc), IsNil)
 
 	actualSize, err := vc.CreateOptions.ActualSize()

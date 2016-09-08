@@ -13,7 +13,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/errored"
 	"github.com/contiv/remotessh"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 )
 
 var startedContainers struct {
@@ -160,13 +160,13 @@ func (s *systemtestSuite) volcli(command string) (string, error) {
 	return s.mon0cmd("volcli " + command)
 }
 
-func (s *systemtestSuite) readIntent(fn string) (*config.Policy, error) {
+func (s *systemtestSuite) readIntent(fn string) (*db.Policy, error) {
 	content, err := ioutil.ReadFile(fn)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg := config.NewPolicy()
+	cfg := &db.Policy{}
 
 	if err := json.Unmarshal(content, cfg); err != nil {
 		return nil, err

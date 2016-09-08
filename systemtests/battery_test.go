@@ -193,7 +193,7 @@ repeat:
 
 func (s *systemtestSuite) TestBatteryParallelCreate(c *C) {
 	nodes := s.vagrant.GetNodes()
-	count := 15
+	count := 5
 	outcount := batteryIterations
 	outwg := sync.WaitGroup{}
 

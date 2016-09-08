@@ -19,14 +19,14 @@ func (s *testSuite) TestNewConsulClient(c *C) {
 	client, err := getConsulClient()
 	c.Assert(err, IsNil)
 
-	volClient, err := consul.NewClient("volplugin", &api.Config{})
+	volClient, err := consul.NewClient(&api.Config{}, "volplugin")
 	c.Assert(err, IsNil)
 	c.Assert(volClient, NotNil)
 
 	_, _, err = client.KV().Get("volplugin", nil)
 	c.Assert(err, IsNil)
 
-	_, err = consul.NewClient("/volplugin", &api.Config{})
+	_, err = consul.NewClient(&api.Config{}, "/volplugin")
 	c.Assert(err, NotNil, Commentf("Consul keyspaces can't start with /"))
 }
 
@@ -35,7 +35,7 @@ func (s *testSuite) TestConsulDown(c *C) {
 		c.Skip("not consul")
 	}
 
-	volClient, err := consul.NewClient("volplugin", &api.Config{})
+	volClient, err := consul.NewClient(&api.Config{}, "volplugin")
 	c.Assert(err, IsNil)
 
 	c.Assert(exec.Command("/bin/sh", "-c", "sudo systemctl stop consul").Run(), IsNil)

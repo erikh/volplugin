@@ -38,4 +38,5 @@ const (
 	rootVolume         = "volumes"
 	rootRuntimeOptions = "runtime-policies"
 	rootPolicy         = "policies"
+	rootSnapshots      = "snapshots"
 )

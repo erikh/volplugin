@@ -37,9 +37,14 @@ func main() {
 			Value: "/volplugin",
 		},
 		cli.StringSliceFlag{
-			Name:  "etcd",
-			Usage: "URL for etcd",
+			Name:  "store-url",
+			Usage: "URL for data store (etcd, consul etc). May be repeated to specify multiple servers.",
 			Value: &cli.StringSlice{"http://localhost:2379"},
+		},
+		cli.StringFlag{
+			Name:  "store",
+			Value: "etcd",
+			Usage: "[etcd | consul] select the type of data store to use",
 		},
 		cli.StringFlag{
 			Name:   "host-label",

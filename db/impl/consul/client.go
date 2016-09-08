@@ -45,7 +45,7 @@ type Client struct {
 
 // NewClient constructs a *Client for use. Requires a consul configuration and
 // a keyspace prefix.
-func NewClient(prefix string, config *api.Config) (*Client, error) {
+func NewClient(config *api.Config, prefix string) (*Client, error) {
 	consulClient, err := api.NewClient(config)
 	if err != nil {
 		return nil, err

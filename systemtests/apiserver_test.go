@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
+	"time"
 
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/db/jsonio"
+
 	. "gopkg.in/check.v1"
 )
 
@@ -26,36 +29,38 @@ func (s *systemtestSuite) TestAPIServerFailedFormat(c *C) {
 }
 
 func (s *systemtestSuite) TestAPIServerGlobalConfigUpdate(c *C) {
+	globalBase1 := db.NewGlobal()
+	globalBase2 := db.NewGlobal()
+
 	content, err := ioutil.ReadFile("testdata/globals/global1.json")
 	c.Assert(err, IsNil)
 
-	globalBase1, err := config.NewGlobalConfigFromJSON(content)
-	c.Assert(err, IsNil)
+	c.Assert(jsonio.Read(globalBase1, content), IsNil)
 
 	content, err = ioutil.ReadFile("testdata/globals/global2.json")
 	c.Assert(err, IsNil)
-
-	globalBase2, err := config.NewGlobalConfigFromJSON(content)
-	c.Assert(err, IsNil)
+	c.Assert(jsonio.Read(globalBase2, content), IsNil)
 
 	c.Assert(s.uploadGlobal("global1"), IsNil)
 
 	out, err := s.volcli("global get")
 	c.Assert(err, IsNil)
 
-	global, err := config.NewGlobalConfigFromJSON([]byte(out))
-	c.Assert(err, IsNil)
+	global := db.NewGlobal()
+	c.Assert(jsonio.Read(global, []byte(out)), IsNil)
 
 	c.Assert(globalBase1, DeepEquals, global)
 	c.Assert(globalBase2, Not(DeepEquals), global)
 
 	c.Assert(s.uploadGlobal("global2"), IsNil)
 
+	time.Sleep(100 * time.Millisecond)
+
 	out, err = s.volcli("global get")
 	c.Assert(err, IsNil)
 
-	global, err = config.NewGlobalConfigFromJSON([]byte(out))
-	c.Assert(err, IsNil)
+	global = db.NewGlobal()
+	c.Assert(jsonio.Read(global, []byte(out)), IsNil)
 
 	c.Assert(globalBase1, Not(DeepEquals), global)
 	c.Assert(globalBase2, DeepEquals, global)
@@ -66,6 +71,8 @@ func (s *systemtestSuite) TestAPIServerMultiRemove(c *C) {
 		c.Skip("Only ceph driver supports CRUD operations")
 		return
 	}
+
+	c.Assert(s.uploadGlobal("global-fasttimeout"), IsNil)
 
 	volName := fqVolume("policy1", genRandomVolume())
 
@@ -91,7 +98,8 @@ func (s *systemtestSuite) TestAPIServerMultiRemove(c *C) {
 		myout := <-outChan
 		if myout.err != nil {
 			if myout.out != "" {
-				c.Assert(strings.Contains(myout.out, fmt.Sprintf(`Error: Volume %s no longer exists`, volName)), Equals, true, Commentf("%v %v", myout.out, myout.err))
+				//c.Assert(strings.Contains(myout.out, volName), Equals, true, Commentf("%v\n%v", volName, myout.out))
+				c.Assert(strings.Contains(myout.out, fmt.Sprintf("Error: Volume %v no longer exists.", volName)), Equals, true, Commentf("%v %v", myout.out, myout.err))
 			}
 			errs++
 		}

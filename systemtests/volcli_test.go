@@ -7,8 +7,7 @@ import (
 
 	. "gopkg.in/check.v1"
 
-	"github.com/contiv/volplugin/config"
-	"github.com/contiv/volplugin/lock"
+	"github.com/contiv/volplugin/db"
 )
 
 func (s *systemtestSuite) TestVolumeCreationWithBackendAttribute(c *C) {
@@ -16,8 +15,8 @@ func (s *systemtestSuite) TestVolumeCreationWithBackendAttribute(c *C) {
 	volName := genRandomVolume()
 	fqVolName := fqVolume(policyName, volName)
 
-	_, err := s.uploadIntent(policyName, policyName) // singleton "ceph" >> "ceph", "ceph", "ceph"
-	c.Assert(err, IsNil)
+	out, err := s.uploadIntent(policyName, policyName) // singleton "ceph" >> "ceph", "ceph", "ceph"
+	c.Assert(err, IsNil, Commentf("%v", out))
 
 	c.Assert(s.createVolume("mon0", fqVolName, nil), IsNil) // docker volume create -d volplugin --name <fqVolName>, with/without mount option
 
@@ -43,18 +42,22 @@ func (s *systemtestSuite) TestVolCLIEmptyGlobal(c *C) {
 	out, err := s.volcli("global get")
 	c.Assert(err, IsNil)
 
-	target := &config.Global{}
+	target := &db.Global{}
 
 	c.Assert(json.Unmarshal([]byte(out), target), IsNil, Commentf(out))
-	c.Assert(config.NewGlobalConfig().Published(), DeepEquals, target, Commentf("%q %#v", out, target))
+	c.Assert(db.NewGlobal().Published(), DeepEquals, target, Commentf("%q %#v", out, target))
 }
 
 func (s *systemtestSuite) TestVolCLIPolicy(c *C) {
 	policy1, err := s.readIntent(fmt.Sprintf("testdata/%s/policy1.json", getDriver()))
 	c.Assert(err, IsNil)
 
+	policy1.SetKey("test1")
+
 	policy2, err := s.readIntent(fmt.Sprintf("testdata/%s/policy2.json", getDriver()))
 	c.Assert(err, IsNil)
+
+	policy2.SetKey("test2")
 
 	_, err = s.uploadIntent("test1", "policy1")
 	c.Assert(err, IsNil)
@@ -81,21 +84,19 @@ func (s *systemtestSuite) TestVolCLIPolicy(c *C) {
 	out, err := s.volcli("policy get test1")
 	c.Assert(err, IsNil)
 
-	intentTarget := config.NewPolicy()
+	intentTarget := db.NewPolicy("test1")
 	c.Assert(json.Unmarshal([]byte(out), intentTarget), IsNil)
 	policy1.FileSystems = map[string]string{"ext4": "mkfs.ext4 -m0 %"}
 
-	policy1.Name = "test1"
 	c.Assert(policy1, DeepEquals, intentTarget)
 	c.Assert(err, IsNil)
 
 	out, err = s.volcli("policy get test2")
 	c.Assert(err, IsNil)
 
-	intentTarget = config.NewPolicy()
+	intentTarget = db.NewPolicy("test2")
 	c.Assert(json.Unmarshal([]byte(out), intentTarget), IsNil)
 	policy2.FileSystems = map[string]string{"ext4": "mkfs.ext4 -m0 %"}
-	policy2.Name = "test2"
 	c.Assert(policy2, DeepEquals, intentTarget)
 
 	out, err = s.volcli("policy list")
@@ -124,17 +125,17 @@ func (s *systemtestSuite) TestVolCLIPolicyNullDriver(c *C) {
 
 	out, err = s.volcli("policy get test")
 	c.Assert(err, IsNil, Commentf("output: %s", out))
-	intentTarget := config.NewPolicy()
+	intentTarget := db.NewPolicy("test")
 	c.Assert(json.Unmarshal([]byte(out), intentTarget), IsNil)
-	testDriverIntent.Name = "test"
+	testDriverIntent.SetKey("test")
 	testDriverIntent.FileSystems = map[string]string{"ext4": "mkfs.ext4 -m0 %"}
 	c.Assert(testDriverIntent, DeepEquals, intentTarget)
 }
 
 func (s *systemtestSuite) TestVolCLIVolume(c *C) {
 	out, err := s.volcli("volume list policy1")
-	c.Assert(err, IsNil, Commentf("output: %s", out))
-	c.Assert(strings.TrimSpace(out), Equals, "")
+	c.Assert(err, NotNil, Commentf("output: %s", out))
+	c.Assert(strings.TrimSpace(out), Equals, "Key not found")
 
 	out, err = s.volcli("volume list-all")
 	c.Assert(err, IsNil, Commentf("output: %s", out))
@@ -162,8 +163,7 @@ func (s *systemtestSuite) TestVolCLIVolume(c *C) {
 	out, err = s.volcli("volume get " + volName)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
 
-	cfg := &config.Volume{}
-
+	cfg := db.NewVolume("policy1", shortVolName)
 	c.Assert(json.Unmarshal([]byte(out), cfg), IsNil)
 
 	cfg.CreateOptions.FileSystem = "ext4"
@@ -171,7 +171,6 @@ func (s *systemtestSuite) TestVolCLIVolume(c *C) {
 	policy1, err := s.readIntent(fmt.Sprintf("testdata/%s/policy1.json", getDriver()))
 	c.Assert(err, IsNil)
 
-	policy1.Name = "policy1"
 	policy1.CreateOptions.FileSystem = "ext4"
 
 	c.Assert(policy1.CreateOptions, DeepEquals, cfg.CreateOptions)
@@ -200,7 +199,8 @@ func (s *systemtestSuite) TestVolCLIVolume(c *C) {
 	out, err = s.volcli("volume get " + volName)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
 
-	cfg = &config.Volume{}
+	cfg = db.NewVolume("policy1", shortVolName)
+
 	c.Assert(json.Unmarshal([]byte(out), cfg), IsNil)
 	cfg.CreateOptions.FileSystem = "ext4"
 	policy1, err = s.readIntent(fmt.Sprintf("testdata/%s/policy1.json", getDriver()))
@@ -272,16 +272,16 @@ func (s *systemtestSuite) TestVolCLIUse(c *C) {
 
 	out, err := s.volcli("use list")
 	c.Assert(err, IsNil, Commentf("output: %s", out))
-	c.Assert(strings.TrimSpace(out), Equals, volName)
+	c.Assert(strings.Contains(out, volName), Equals, true, Commentf("%v", out))
 
 	out, err = s.volcli("use get " + volName)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
 
-	ut := &config.UseMount{}
+	ut := &db.Use{}
 	c.Assert(json.Unmarshal([]byte(out), ut), IsNil)
 	c.Assert(ut.Volume, NotNil)
-	c.Assert(ut.Hostname, Equals, "mon0")
-	c.Assert(ut.Reason, Equals, lock.ReasonMount)
+	c.Assert(ut.Owner(), Equals, "mon0")
+	c.Assert(ut.Reason(), Equals, "Mount")
 
 	out, err = s.mon0cmd("docker rm -f " + id)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
@@ -322,16 +322,16 @@ func (s *systemtestSuite) TestVolCLIRemoveForce(c *C) {
 
 	out, err := s.volcli("use list")
 	c.Assert(err, IsNil, Commentf("output: %s", out))
-	c.Assert(strings.TrimSpace(out), Equals, volName)
+	c.Assert(strings.Contains(out, volName), Equals, true, Commentf("%v", out))
 
 	out, err = s.volcli("use get " + volName)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
 
-	ut := &config.UseMount{}
+	ut := &db.Use{}
 	c.Assert(json.Unmarshal([]byte(out), ut), IsNil)
 	c.Assert(ut.Volume, NotNil)
-	c.Assert(ut.Hostname, Equals, "mon0")
-	c.Assert(ut.Reason, Equals, lock.ReasonMount)
+	c.Assert(ut.Owner(), Equals, "mon0")
+	c.Assert(ut.Reason(), Equals, "Mount")
 
 	out, err = s.mon0cmd("docker rm -f " + id)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
@@ -360,16 +360,16 @@ func (s *systemtestSuite) TestVolCLIRemoveTimeout(c *C) {
 
 	out, err := s.volcli("use list")
 	c.Assert(err, IsNil, Commentf("output: %s", out))
-	c.Assert(strings.TrimSpace(out), Equals, volName)
+	c.Assert(strings.Contains(out, volName), Equals, true, Commentf("%v", out))
 
 	out, err = s.volcli("use get " + volName)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
 
-	ut := &config.UseMount{}
+	ut := &db.Use{}
 	c.Assert(json.Unmarshal([]byte(out), ut), IsNil)
 	c.Assert(ut.Volume, NotNil)
-	c.Assert(ut.Hostname, Equals, "mon0")
-	c.Assert(ut.Reason, Equals, lock.ReasonMount)
+	c.Assert(ut.Owner(), Equals, "mon0")
+	c.Assert(ut.Reason(), Equals, "Mount")
 
 	out, err = s.mon0cmd("docker rm -f " + id)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
@@ -399,12 +399,12 @@ func (s *systemtestSuite) TestVolCLIRuntime(c *C) {
 	c.Assert(s.createVolume("mon0", volName, nil), IsNil)
 	volcliOut, err := s.volcli("volume runtime get " + volName)
 	c.Assert(err, IsNil)
-	runtimeOptions := config.RuntimeOptions{}
+	runtimeOptions := &db.RuntimeOptions{}
 	c.Assert(json.Unmarshal([]byte(volcliOut), &runtimeOptions), IsNil)
 
 	volcliOut, err = s.volcli("volume get " + volName)
 	c.Assert(err, IsNil)
-	volume := &config.Volume{}
+	volume := &db.Volume{}
 	c.Assert(json.Unmarshal([]byte(volcliOut), volume), IsNil)
 
 	c.Assert(volume.RuntimeOptions, DeepEquals, runtimeOptions)
@@ -414,7 +414,7 @@ func (s *systemtestSuite) TestVolCLIRuntime(c *C) {
 	c.Assert(err, IsNil, Commentf("output: %s", out))
 	volcliOut, err = s.volcli("volume get " + volName)
 	c.Assert(err, IsNil, Commentf("output: %s", out))
-	volume = &config.Volume{}
+	volume = &db.Volume{}
 	c.Assert(json.Unmarshal([]byte(volcliOut), volume), IsNil)
 	c.Assert(volume.RuntimeOptions.Snapshot.Keep, Equals, uint(15))
 }

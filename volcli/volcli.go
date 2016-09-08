@@ -16,12 +16,28 @@ import (
 
 	"github.com/codegangsta/cli"
 	"github.com/contiv/errored"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/db/impl/consul"
+	"github.com/contiv/volplugin/db/impl/etcd"
 	"github.com/contiv/volplugin/errors"
-	"github.com/contiv/volplugin/lock"
-	"github.com/contiv/volplugin/watch"
+	"github.com/hashicorp/consul/api"
 	"github.com/kr/pty"
 )
+
+// GetClientByName is provided a prefix and list of hosts to contact, then
+// proceeds to connect to the host with the named client. The underlying client
+// implementation will be selected based on the name provided, and the
+// appropriate structures will be set up, etc.
+func GetClientByName(name string, prefix string, hosts []string) (db.Client, error) {
+	switch name {
+	case "etcd":
+		return etcd.NewClient(hosts, prefix)
+	case "consul":
+		return consul.NewClient(&api.Config{Address: hosts[0]}, prefix)
+	}
+
+	return nil, errored.Errorf("Invalid client driver name: %v", name)
+}
 
 func errorInvalidVolumeSyntax(rcvd, exptd string) error {
 	return errored.Errorf("Invalid syntax: %q must be in the form of %q)", rcvd, exptd)
@@ -74,7 +90,7 @@ func GlobalGet(ctx *cli.Context) {
 	execCliAndExit(ctx, globalGet)
 }
 
-func queryGlobalConfig(ctx *cli.Context) (*config.Global, error) {
+func queryGlobalConfig(ctx *cli.Context) (*db.Global, error) {
 	resp, err := http.Get(fmt.Sprintf("http://%s/global", ctx.GlobalString("apiserver")))
 	if err != nil {
 		return nil, err
@@ -91,7 +107,7 @@ func queryGlobalConfig(ctx *cli.Context) (*config.Global, error) {
 
 	// rebuild and divide the contents so they are cast out of their internal
 	// representation.
-	return config.NewGlobalConfigFromJSON(content)
+	return db.NewGlobalFromJSON(content)
 }
 
 func globalGet(ctx *cli.Context) (bool, error) {
@@ -128,7 +144,7 @@ func globalUpload(ctx *cli.Context) (bool, error) {
 		return false, err
 	}
 
-	global := config.NewGlobalConfig()
+	global := db.NewGlobal()
 	if err := json.Unmarshal(content, global); err != nil {
 		return false, err
 	}
@@ -163,14 +179,13 @@ func policyUpload(ctx *cli.Context) (bool, error) {
 		return false, err
 	}
 
-	policy := config.NewPolicy()
-	policyName := ctx.Args()[0]
+	policy := db.NewPolicy(ctx.Args()[0])
 
 	if err := json.Unmarshal(content, policy); err != nil {
 		return false, err
 	}
 
-	resp, err := http.Post(fmt.Sprintf("http://%s/policies/%s", ctx.GlobalString("apiserver"), policyName), "application/json", bytes.NewBuffer(content))
+	resp, err := http.Post(fmt.Sprintf("http://%s/policies/%s", ctx.GlobalString("apiserver"), policy), "application/json", bytes.NewBuffer(content))
 	if err != nil {
 		return false, err
 	}
@@ -255,7 +270,6 @@ func PolicyList(ctx *cli.Context) {
 }
 
 func policyList(ctx *cli.Context) (bool, error) {
-	var policies []config.Policy
 	if len(ctx.Args()) != 0 {
 		return true, errorInvalidArgCount(len(ctx.Args()), 0, ctx.Args())
 	}
@@ -277,12 +291,13 @@ func policyList(ctx *cli.Context) (bool, error) {
 		return false, err
 	}
 
+	var policies []*db.NamedPolicy
 	if err := json.Unmarshal(content, &policies); err != nil {
 		return false, err
 	}
 
 	for _, policy := range policies {
-		fmt.Println(policy.Name)
+		fmt.Println(policy)
 	}
 
 	return false, nil
@@ -382,24 +397,21 @@ func policyWatch(ctx *cli.Context) (bool, error) {
 		return true, errorInvalidArgCount(len(ctx.Args()), 0, ctx.Args())
 	}
 
-	cfg, err := config.NewClient(ctx.GlobalString("prefix"), ctx.GlobalStringSlice("etcd"))
+	cfg, err := GetClientByName(ctx.GlobalString("store"), ctx.GlobalString("prefix"), ctx.GlobalStringSlice("store-url"))
 	if err != nil {
 		return false, err
 	}
 
-	activity := make(chan *watch.Watch)
-	cfg.WatchForPolicyChanges(activity)
+	watchChan, errChan := cfg.Watch(&db.PolicyRevision{})
 
-	for w := range activity {
-		changeset := w.Config.([]string)
-
-		name := changeset[0]
-		revision := changeset[1]
-
-		fmt.Printf("%s\t%s\n", name, revision)
+	for {
+		select {
+		case err := <-errChan:
+			return false, err
+		case obj := <-watchChan:
+			fmt.Println(obj)
+		}
 	}
-
-	return false, nil
 }
 
 // VolumeCreate creates a new volume with a JSON specification to store its
@@ -429,7 +441,7 @@ func volumeCreate(ctx *cli.Context) (bool, error) {
 		opts[pair[0]] = pair[1]
 	}
 
-	tc := &config.VolumeRequest{
+	tc := &db.VolumeRequest{
 		Policy:  policy,
 		Name:    volume,
 		Options: opts,
@@ -442,7 +454,7 @@ func volumeCreate(ctx *cli.Context) (bool, error) {
 
 	resp, err := http.Post(fmt.Sprintf("http://%s/volumes/create", ctx.GlobalString("apiserver")), "application/json", bytes.NewBuffer(content))
 	if err != nil {
-		return false, errored.Errorf("Error in request: %v - %v", err, resp.Status)
+		return false, errored.Errorf("Error in request: %v", err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -493,7 +505,7 @@ func volumeGet(ctx *cli.Context) (bool, error) {
 		return false, err
 	}
 
-	var vol config.Volume
+	var vol *db.Volume
 
 	if err := json.Unmarshal(content, &vol); err != nil {
 		return false, err
@@ -524,7 +536,7 @@ func volumeForceRemove(ctx *cli.Context) (bool, error) {
 		return true, err
 	}
 
-	request := config.VolumeRequest{
+	request := db.VolumeRequest{
 		Policy: policy,
 		Name:   volume,
 	}
@@ -575,7 +587,7 @@ func volumeRemove(ctx *cli.Context) (bool, error) {
 		return false, errored.Errorf("%v is not a valid timeout", ctx.String("timeout"))
 	}
 
-	request := config.VolumeRequest{
+	request := db.VolumeRequest{
 		Policy: policy,
 		Name:   volume,
 		Options: map[string]string{
@@ -616,7 +628,7 @@ func VolumeList(ctx *cli.Context) {
 }
 
 func volumeList(ctx *cli.Context) (bool, error) {
-	var volumes []config.Volume
+	var volumes []*db.NamedVolume
 	if len(ctx.Args()) != 1 {
 		return true, errorInvalidArgCount(len(ctx.Args()), 1, ctx.Args())
 	}
@@ -645,7 +657,7 @@ func volumeList(ctx *cli.Context) (bool, error) {
 	}
 
 	for _, volume := range volumes {
-		fmt.Println(volume.VolumeName)
+		fmt.Println(volume)
 	}
 
 	return false, nil
@@ -700,7 +712,7 @@ func volumeSnapshotCopy(ctx *cli.Context) (bool, error) {
 	snapName := ctx.Args()[1]
 	volume2 := ctx.Args()[2]
 
-	req := &config.VolumeRequest{
+	req := &db.VolumeRequest{
 		Name:   volume1,
 		Policy: policy,
 		Options: map[string]string{
@@ -732,12 +744,12 @@ func volumeSnapshotCopy(ctx *cli.Context) (bool, error) {
 		return false, errored.New("Reading body processing response").Combine(err)
 	}
 
-	vol := &config.Volume{}
+	vol := &db.Volume{}
 	if err := json.Unmarshal(content, vol); err != nil {
 		return false, errors.UnmarshalVolume.Combine(err)
 	}
 
-	fmt.Println(strings.Join([]string{vol.PolicyName, vol.VolumeName}, "/"))
+	fmt.Println(vol)
 
 	return false, nil
 }
@@ -794,7 +806,7 @@ func VolumeListAll(ctx *cli.Context) {
 }
 
 func volumeListAll(ctx *cli.Context) (bool, error) {
-	var volumes []config.Volume
+	var volumes []*db.NamedVolume
 	if len(ctx.Args()) != 0 {
 		return true, errorInvalidArgCount(len(ctx.Args()), 0, ctx.Args())
 	}
@@ -821,7 +833,7 @@ func volumeListAll(ctx *cli.Context) (bool, error) {
 	}
 
 	for _, volume := range volumes {
-		fmt.Printf("%v/%v\n", volume.PolicyName, volume.VolumeName)
+		fmt.Println(volume)
 	}
 
 	return false, nil
@@ -837,16 +849,17 @@ func useList(ctx *cli.Context) (bool, error) {
 		return true, errorInvalidArgCount(len(ctx.Args()), 0, ctx.Args())
 	}
 
-	cfg, err := config.NewClient(ctx.GlobalString("prefix"), ctx.GlobalStringSlice("etcd"))
+	cfg, err := GetClientByName(ctx.GlobalString("store"), ctx.GlobalString("prefix"), ctx.GlobalStringSlice("store-url"))
 	if err != nil {
 		return false, err
 	}
 
-	var uses []string
+	var uses []db.Entity
+	// FIXME I really dislike this use of NewSnapshotCreate
 	if ctx.Bool("snapshots") {
-		uses, err = cfg.ListUses("snapshot")
+		uses, err = cfg.List(db.NewSnapshotCreate(nil))
 	} else {
-		uses, err = cfg.ListUses("mount")
+		uses, err = cfg.List(&db.Use{})
 	}
 
 	if err != nil {
@@ -875,25 +888,20 @@ func useGet(ctx *cli.Context) (bool, error) {
 		return true, err
 	}
 
-	cfg, err := config.NewClient(ctx.GlobalString("prefix"), ctx.GlobalStringSlice("etcd"))
+	cfg, err := GetClientByName(ctx.GlobalString("store"), ctx.GlobalString("prefix"), ctx.GlobalStringSlice("store-url"))
 	if err != nil {
 		return false, err
 	}
 
-	vc := &config.Volume{
-		PolicyName: policy,
-		VolumeName: volume,
-	}
-
-	var ul config.UseLocker
+	var ul db.Lock
 
 	if ctx.Bool("snapshot") {
-		ul = &config.UseSnapshot{}
+		ul = db.NewSnapshotCreate(db.NewVolume(policy, volume))
 	} else {
-		ul = &config.UseMount{}
+		ul = db.NewCreateOwner(ctx.GlobalString("hostname"), db.NewVolume(policy, volume))
 	}
 
-	if err := cfg.GetUse(ul, vc); err != nil {
+	if err := cfg.Get(ul); err != nil {
 		return false, err
 	}
 
@@ -923,21 +931,20 @@ func useTheForce(ctx *cli.Context) (bool, error) {
 		return true, err
 	}
 
-	cfg, err := config.NewClient(ctx.GlobalString("prefix"), ctx.GlobalStringSlice("etcd"))
+	cfg, err := GetClientByName(ctx.GlobalString("store"), ctx.GlobalString("prefix"), ctx.GlobalStringSlice("store-url"))
 	if err != nil {
 		return false, err
 	}
 
-	vc := &config.Volume{
-		PolicyName: policy,
-		VolumeName: volume,
-	}
+	vc := db.NewVolume(policy, volume)
 
-	if err := cfg.RemoveUse(&config.UseMount{Volume: vc.String()}, true); err != nil {
+	ul := db.NewCreateOwner(ctx.GlobalString("hostname"), vc)
+	if err := cfg.Delete(ul); err != nil {
 		fmt.Fprintf(os.Stderr, "Trouble removing mount lock (may be harmless) for %q: %v", vc, err)
 	}
 
-	if err := cfg.RemoveUse(&config.UseSnapshot{Volume: vc.String()}, true); err != nil {
+	ul = db.NewSnapshotCreate(vc)
+	if err := cfg.Delete(ul); err != nil {
 		fmt.Fprintf(os.Stderr, "Trouble removing snapshot lock (may be harmless) for %q: %v", vc, err)
 	}
 
@@ -959,31 +966,14 @@ func useExec(ctx *cli.Context) (bool, error) {
 		return true, err
 	}
 
-	cfg, err := config.NewClient(ctx.GlobalString("prefix"), ctx.GlobalStringSlice("etcd"))
+	cfg, err := GetClientByName(ctx.GlobalString("store"), ctx.GlobalString("prefix"), ctx.GlobalStringSlice("store-url"))
 	if err != nil {
 		return false, err
 	}
 
-	vc := &config.Volume{
-		PolicyName: policy,
-		VolumeName: volume,
-	}
-
-	host, err := os.Hostname()
-	if err != nil {
-		return false, err
-	}
-
-	um := &config.UseMount{
-		Volume:   vc.String(),
-		Reason:   lock.ReasonMaintenance,
-		Hostname: host,
-	}
-
-	us := &config.UseSnapshot{
-		Volume: vc.String(),
-		Reason: lock.ReasonMaintenance,
-	}
+	vc := db.NewVolume(policy, volume)
+	um := db.NewMaintenanceOwner(ctx.GlobalString("hostname"), vc)
+	us := db.NewSnapshotMaintenance(vc)
 
 	args := ctx.Args()[1:]
 	if args[0] == "--" {
@@ -993,7 +983,7 @@ func useExec(ctx *cli.Context) (bool, error) {
 		args = args[1:]
 	}
 
-	err = lock.NewDriver(cfg).ExecuteWithMultiUseLock([]config.UseLocker{um, us}, -1, func(ld *lock.Driver, uls []config.UseLocker) error {
+	err = db.ExecuteWithMultiUseLock(cfg, func(locks []db.Lock) error {
 		cmd := exec.Command("/bin/sh", "-c", strings.Join(args, " "))
 
 		signals := make(chan os.Signal)
@@ -1009,7 +999,7 @@ func useExec(ctx *cli.Context) (bool, error) {
 		}
 
 		return cmd.Wait()
-	})
+	}, time.Minute, um, us)
 
 	return false, err
 }
@@ -1047,9 +1037,9 @@ func volumeRuntimeGet(ctx *cli.Context) (bool, error) {
 		return false, err
 	}
 
-	runtime := config.RuntimeOptions{}
+	runtime := &db.RuntimeOptions{}
 
-	if err := json.Unmarshal(content, &runtime); err != nil {
+	if err := json.Unmarshal(content, runtime); err != nil {
 		return false, err
 	}
 
@@ -1083,9 +1073,9 @@ func volumeRuntimeUpload(ctx *cli.Context) (bool, error) {
 		return false, err
 	}
 
-	runtime := config.RuntimeOptions{}
+	runtime := &db.RuntimeOptions{}
 
-	if err := json.Unmarshal(content, &runtime); err != nil {
+	if err := json.Unmarshal(content, runtime); err != nil {
 		return false, err
 	}
 

@@ -7,21 +7,28 @@ import (
 	"github.com/contiv/volplugin/errors"
 )
 
+func (n *NamedPolicy) String() string {
+	return n.Name
+}
+
 // NewPolicy creates a policy struct with the required parameters for using it.
 // It will not pass validation.
 func NewPolicy(name string) *Policy {
-	p := &Policy{Name: name}
-
-	if p.FileSystems == nil {
-		p.FileSystems = DefaultFilesystems
+	return &Policy{
+		name:           name,
+		FileSystems:    DefaultFilesystems,
+		RuntimeOptions: &RuntimeOptions{},
 	}
+}
 
-	return p
+// Named returns the NamedPolicy representation of this struct for API response purposes.
+func (p *Policy) Named() *NamedPolicy {
+	return &NamedPolicy{p.String(), p}
 }
 
 // SetKey implements the SetKey entity interface.
 func (p *Policy) SetKey(key string) error {
-	suffix := strings.Trim(strings.TrimPrefix(key, rootPolicy), "/")
+	suffix := strings.Trim(strings.TrimPrefix(key, p.Prefix()), "/")
 	if strings.Contains(suffix, "/") {
 		return errors.InvalidDBPath.Combine(errored.Errorf("Policy name %q contains invalid characters", suffix))
 	}
@@ -30,7 +37,7 @@ func (p *Policy) SetKey(key string) error {
 		return errors.InvalidDBPath.Combine(errored.New("Policy name is empty"))
 	}
 
-	p.Name = suffix
+	p.name = suffix
 	return nil
 }
 
@@ -41,15 +48,19 @@ func (p *Policy) Prefix() string {
 
 // Path returns the path to the policy in the DB.
 func (p *Policy) Path() (string, error) {
-	if p.Name == "" {
-		return "", errored.Errorf("Name is blank for this policy").Combine(errors.InvalidDBPath)
+	if p.name == "" {
+		return "", errored.Errorf("name is blank for this policy").Combine(errors.InvalidDBPath)
 	}
 
-	return strings.Join([]string{p.Prefix(), p.Name}, "/"), nil
+	return strings.Join([]string{p.Prefix(), p.name}, "/"), nil
 }
 
 // Validate validates the policy. Returns error on failure.
 func (p *Policy) Validate() error {
+	if p.RuntimeOptions == nil {
+		p.RuntimeOptions = &RuntimeOptions{}
+	}
+
 	if err := validateJSON(RuntimeSchema, p.RuntimeOptions); err != nil {
 		return errors.ErrJSONValidation.Combine(err)
 	}
@@ -76,7 +87,7 @@ func (p *Policy) Validate() error {
 }
 
 func (p *Policy) String() string {
-	return p.Name
+	return p.name
 }
 
 // Copy returns a deep copy of the policy
@@ -99,7 +110,13 @@ func (p *Policy) Copy() Entity {
 	return &p2
 }
 
+func policyRevisionSet(c Client, obj Entity) error {
+	return c.Set(&PolicyRevision{Policy: obj.(*Policy)})
+}
+
 // Hooks returns the public hooks this type registers with the client.
 func (p *Policy) Hooks() *Hooks {
-	return &Hooks{}
+	return &Hooks{
+		PreSet: policyRevisionSet,
+	}
 }

@@ -6,9 +6,9 @@ host=$(hostname)
 
 
 clean_container () {
-	if docker ps -a | grep $1 -q; then
-		docker rm -fv $1
-	fi
+  set +e
+  docker rm -fv $1
+  set -e
 }
 
 wait_for_etcd () {
@@ -51,11 +51,14 @@ if $fast; then
 		fi
 	fi
 
-	# Add a host entry for contiv-reg in /etc/hosts if it does not exist
-	if ! sudo grep contiv-reg /etc/hosts -q; then
-		echo $host, " adding a host entry for ", ${localregistryip}
-		echo ${localregistryip} contiv-reg | sudo tee --append /etc/hosts
-	fi
+  if [ -n "${localregistry}" ]
+  then 
+    # Add a host entry for contiv-reg in /etc/hosts if it does not exist
+    if ! sudo grep -E '.+ contiv-reg' /etc/hosts -q; then
+      echo $host, " adding a host entry for ", ${localregistryip}
+      echo ${localregistryip} contiv-reg | sudo tee --append /etc/hosts
+    fi
+  fi
 
 	# Ensure that docker allows our insecure registry if not already allowed
 	if ! sudo grep insecure-registry /usr/lib/systemd/system/docker.service -q; then

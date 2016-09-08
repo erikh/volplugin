@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"time"
 
@@ -19,34 +20,34 @@ func (s *testSuite) TestVolumeCRUD(c *C) {
 
 	c.Assert(s.client.Set(&db.Volume{}), NotNil)
 
-	_, err := db.CreateVolume(&db.VolumeRequest{Policy: nil})
+	_, err := db.CreateVolume(nil, "", nil)
 	c.Assert(err, NotNil)
 
 	// populate the policies so the next few tests don't give false positives
 	for _, policy := range policyNames {
 		copy := testPolicies["basic"].Copy()
-		copy.(*db.Policy).Name = policy
+		copy.SetKey(policy)
 		err := s.client.Set(copy)
 		c.Assert(err, IsNil, Commentf("%v", err))
 	}
 
-	_, err = db.CreateVolume(&db.VolumeRequest{Policy: db.NewPolicy("foo"), Name: "bar", Options: map[string]string{"quux": "derp"}})
+	_, err = db.CreateVolume(db.NewPolicy("foo"), "bar", map[string]string{"quux": "derp"})
 	c.Assert(err, NotNil)
 
-	_, err = db.CreateVolume(&db.VolumeRequest{Policy: db.NewPolicy("foo"), Name: ""})
+	_, err = db.CreateVolume(db.NewPolicy("foo"), "", nil)
 	c.Assert(err, NotNil)
 
 	vol := db.NewVolume("foo", "bar")
 	c.Assert(s.client.Get(vol).(*errored.Error).Contains(errors.NotExists), Equals, true)
 
-	// _, err = s.client.ListVolumes("quux")
-	// c.Assert(err, NotNil)
-
 	for _, policyName := range policyNames {
+		fullNames := []string{}
 		for _, volumeName := range volumeNames {
+			fullNames = append(fullNames, path.Join(policyName, volumeName))
+
 			policy := db.NewPolicy(policyName)
 			c.Assert(s.client.Get(policy), IsNil)
-			vcfg, err := db.CreateVolume(&db.VolumeRequest{Policy: policy, Name: volumeName, Options: map[string]string{"filesystem": ""}})
+			vcfg, err := db.CreateVolume(policy, volumeName, map[string]string{"filesystem": ""})
 			c.Assert(err, IsNil)
 			err = s.client.Set(vcfg)
 			c.Assert(err, IsNil, Commentf("%v", err))
@@ -57,7 +58,7 @@ func (s *testSuite) TestVolumeCRUD(c *C) {
 
 			defer func() { c.Assert(s.client.Delete(vcfg), IsNil) }()
 
-			c.Assert(vcfg.VolumeName, Equals, volumeName)
+			c.Assert(vcfg.String(), Equals, path.Join(policyName, volumeName))
 
 			vcfg2 := db.NewVolume(policyName, volumeName)
 			c.Assert(s.client.Get(vcfg2), IsNil)
@@ -76,12 +77,13 @@ func (s *testSuite) TestVolumeCRUD(c *C) {
 
 		volumeKeys := []string{}
 		for _, volume := range volumes {
-			volumeKeys = append(volumeKeys, volume.(*db.Volume).VolumeName)
+			volumeKeys = append(volumeKeys, volume.String())
 		}
 
 		sort.Strings(volumeKeys)
+		sort.Strings(fullNames)
 
-		c.Assert(volumeNames, DeepEquals, volumeKeys)
+		c.Assert(fullNames, DeepEquals, volumeKeys)
 		for _, entity := range volumes {
 			vol := entity.(*db.Volume)
 			testPolicies["basic"].RuntimeOptions.SetKey(vol.String())
@@ -98,7 +100,7 @@ func (s *testSuite) TestVolumeCRUD(c *C) {
 			found := false
 			for _, ent := range allVols {
 				vol := ent.(*db.Volume)
-				if vol.PolicyName == policy && vol.VolumeName == volume {
+				if vol.String() == path.Join(policy, volume) {
 					found = true
 				}
 
@@ -141,30 +143,23 @@ func (s *testSuite) TestActualSize(c *C) {
 }
 
 func (s *testSuite) TestVolumeValidate(c *C) {
-	vc := &db.Volume{
-		VolumeName: "foo",
-		PolicyName: "policy1",
-	}
+	vc := db.NewVolume("foo", "policy1")
 	c.Assert(vc.Validate(), NotNil)
 
 	vc = &db.Volume{
 		DriverOptions:  map[string]string{"pool": "rbd"},
 		CreateOptions:  db.CreateOptions{Size: "10MB"},
 		RuntimeOptions: &db.RuntimeOptions{UseSnapshots: false},
-		VolumeName:     "",
-		PolicyName:     "policy1",
 	}
-
+	vc.SetKey("policy1/")
 	c.Assert(vc.Validate(), NotNil)
 
 	vc = &db.Volume{
 		DriverOptions:  map[string]string{"pool": "rbd"},
 		CreateOptions:  db.CreateOptions{Size: "10MB"},
 		RuntimeOptions: &db.RuntimeOptions{UseSnapshots: false},
-		VolumeName:     "foo",
-		PolicyName:     "",
 	}
-
+	vc.SetKey("/foo")
 	c.Assert(vc.Validate(), NotNil)
 
 	vc = &db.Volume{
@@ -176,10 +171,8 @@ func (s *testSuite) TestVolumeValidate(c *C) {
 		DriverOptions:  map[string]string{"pool": "rbd"},
 		CreateOptions:  db.CreateOptions{Size: "10MB"},
 		RuntimeOptions: &db.RuntimeOptions{UseSnapshots: false},
-		VolumeName:     "foo",
-		PolicyName:     "policy1",
 	}
-
+	vc.SetKey("policy1/foo")
 	c.Assert(vc.Validate(), IsNil)
 }
 
@@ -196,7 +189,7 @@ func (s *testSuite) TestVolumeOptionsValidate(c *C) {
 
 func (s *testSuite) TestToDriverOptions(c *C) {
 	c.Assert(s.client.Set(testPolicies["basic"]), IsNil)
-	vol, err := db.CreateVolume(&db.VolumeRequest{Policy: testPolicies["basic"], Name: "test"})
+	vol, err := db.CreateVolume(testPolicies["basic"], "test", nil)
 	c.Assert(err, IsNil)
 
 	do, err := vol.ToDriverOptions(1)
@@ -221,15 +214,15 @@ func (s *testSuite) TestToDriverOptions(c *C) {
 
 func (s *testSuite) TestMountSource(c *C) {
 	c.Assert(s.client.Set(testPolicies["nfs"]), IsNil)
-	vol, err := db.CreateVolume(&db.VolumeRequest{Policy: testPolicies["nfs"], Name: "test", Options: map[string]string{"mount": "localhost:/mnt"}})
+	vol, err := db.CreateVolume(testPolicies["nfs"], "test", map[string]string{"mount": "localhost:/mnt"})
 	c.Assert(err, IsNil)
 	c.Assert(vol.MountSource, Equals, "localhost:/mnt")
-	_, err = db.CreateVolume(&db.VolumeRequest{Policy: testPolicies["nfs"], Name: "test2"})
+	_, err = db.CreateVolume(testPolicies["nfs"], "test2", nil)
 	c.Assert(err, NotNil)
+
 	copy := testPolicies["basic"].Copy()
-	copy.(*db.Policy).Name = "nfs"
 	c.Assert(s.client.Set(testPolicies["basic"]), IsNil)
-	vol, err = db.CreateVolume(&db.VolumeRequest{Policy: copy.(*db.Policy), Name: "test2"})
+	vol, err = db.CreateVolume(copy.(*db.Policy), "test2", nil)
 	c.Assert(err, IsNil)
 	c.Assert(vol.MountSource, Equals, "")
 }
@@ -243,11 +236,11 @@ func (s *testSuite) TestWatchVolumes(c *C) {
 	}
 
 	c.Assert(s.client.Set(testPolicies["basic"]), IsNil)
-	vol, err := db.CreateVolume(&db.VolumeRequest{Policy: testPolicies["basic"], Name: "test"})
+	vol, err := db.CreateVolume(testPolicies["basic"], "test", nil)
 	c.Assert(err, IsNil)
 
 	for i := 0; i < 5; i++ {
-		vol.VolumeName = fmt.Sprintf("test%d", i)
+		vol.SetKey(fmt.Sprintf("basic/test%d", i))
 		c.Assert(s.client.Set(vol), IsNil)
 
 		select {
@@ -273,7 +266,7 @@ func (s *testSuite) TestWatchVolumes(c *C) {
 
 	c.Assert(s.client.WatchPrefixStop(&db.Volume{}), IsNil)
 
-	vol, err = db.CreateVolume(&db.VolumeRequest{Policy: testPolicies["basic"], Name: "test2"})
+	vol, err = db.CreateVolume(testPolicies["basic"], "test2", nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.client.Set(vol), IsNil)
 

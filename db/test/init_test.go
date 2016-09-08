@@ -62,7 +62,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		s.client, err = etcd.NewClient(etcdHosts, "volplugin")
 		c.Assert(err, IsNil)
 	case "consul":
-		s.client, err = consul.NewClient("volplugin", &api.Config{Address: ":8500"})
+		s.client, err = consul.NewClient(&api.Config{Address: ":8500"}, "volplugin")
 		c.Assert(err, IsNil)
 	}
 }
