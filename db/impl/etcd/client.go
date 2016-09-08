@@ -169,7 +169,11 @@ func (c *Client) traverse(node *client.Node, obj db.Entity) []db.Entity {
 			entities = append(entities, c.traverse(inner, obj)...)
 		}
 	} else if copy, err := helpers.ReadAndSet(c, obj, node.Key, []byte(node.Value)); err == nil {
+		// this read-and-set can fail if the value is empty. This is o.k. and will show up in the debug logs via the error below.
+		// FIXME make this more informative when it fails.
 		entities = append(entities, copy)
+	} else if err != nil {
+		logrus.Debugf("Error handling key %v, value %v: %v", node.Key, node.Value, err)
 	}
 
 	return entities
@@ -191,18 +195,17 @@ func (c *Client) List(obj db.Entity) ([]db.Entity, error) {
 func (c *Client) ListPrefix(prefix string, obj db.Entity) ([]db.Entity, error) {
 	resp, err := c.client.Get(context.Background(), c.qualified(path.Join(obj.Prefix(), prefix)), &client.GetOptions{Recursive: true})
 	if err != nil {
-		return nil, err
+		return nil, errors.EtcdToErrored(err)
 	}
 
 	return c.traverse(resp.Node, obj), nil
 }
 
-// Acquire and permanently hold a lock. Attempts until timeout. If timeout is
-// zero, it will only try once.
+// Acquire and permanently hold a lock. Tries exactly once.
 func (c *Client) Acquire(lock db.Lock) error {
 	logrus.Debugf("Acquiring lock %v", lock)
 
-	if err := c.doAcquire(lock, 0); err != nil {
+	if err := c.doAcquire(lock, 0, false); err != nil {
 		return err
 	}
 
@@ -211,7 +214,7 @@ func (c *Client) Acquire(lock db.Lock) error {
 	return nil
 }
 
-func (c *Client) doAcquire(lock db.Lock, ttl time.Duration) error {
+func (c *Client) doAcquire(lock db.Lock, ttl time.Duration, overwrite bool) error {
 	content, err := jsonio.Write(lock)
 	if err != nil {
 		return errors.LockFailed.Combine(err)
@@ -222,9 +225,9 @@ func (c *Client) doAcquire(lock db.Lock, ttl time.Duration) error {
 		return errors.LockFailed.Combine(err)
 	}
 
-	_, err = c.client.Set(context.Background(), c.qualified(path), string(content), &client.SetOptions{PrevValue: string(content), TTL: ttl})
-	if er, ok := err.(client.Error); ok && er.Code == client.ErrorCodeKeyNotFound {
-		_, err := c.client.Set(context.Background(), c.qualified(path), string(content), &client.SetOptions{PrevExist: client.PrevNoExist, TTL: ttl})
+	_, err = c.client.Set(context.Background(), c.qualified(path), string(content), &client.SetOptions{PrevExist: client.PrevNoExist, TTL: ttl})
+	if er, ok := err.(client.Error); ok && er.Code == client.ErrorCodeNodeExist && overwrite {
+		_, err := c.client.Set(context.Background(), c.qualified(path), string(content), &client.SetOptions{PrevValue: string(content), TTL: ttl})
 		if err != nil {
 			return errors.LockFailed.Combine(err)
 		}
@@ -237,6 +240,8 @@ func (c *Client) doAcquire(lock db.Lock, ttl time.Duration) error {
 
 // Free a lock. Pass force=true to force it dead.
 func (c *Client) Free(lock db.Lock, force bool) error {
+	logrus.Debugf("Freeing lock %s", lock)
+
 	content, err := jsonio.Write(lock)
 	if err != nil {
 		return errors.LockFailed.Combine(err)
@@ -267,7 +272,7 @@ func (c *Client) Free(lock db.Lock, force bool) error {
 func (c *Client) AcquireAndRefresh(lock db.Lock, ttl time.Duration) (chan struct{}, error) {
 	logrus.Debugf("In refresh, performing preliminary permanent lock on %v", lock)
 	if err := c.Acquire(lock); err != nil {
-		return nil, err
+		return nil, errors.LockFailed.Combine(errors.EtcdToErrored(err))
 	}
 
 	stopChan := make(chan struct{})
@@ -305,7 +310,7 @@ func (c *Client) AcquireWithTTL(lock db.Lock, ttl time.Duration) error {
 
 	logrus.Debugf("Acquiring lock %v with ttl %v", lock, ttl)
 
-	if err := c.doAcquire(lock, ttl); err != nil {
+	if err := c.doAcquire(lock, ttl, true); err != nil {
 		return err
 	}
 

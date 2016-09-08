@@ -5,9 +5,14 @@ import (
 	. "gopkg.in/check.v1"
 )
 
+func init() {
+	for name, policy := range testPolicies {
+		policy.SetKey(name)
+	}
+}
+
 var testPolicies = map[string]*db.Policy{
 	"basic": {
-		Name: "basic",
 		Backends: &db.BackendDrivers{
 			CRUD:     "ceph",
 			Mount:    "ceph",
@@ -25,10 +30,9 @@ var testPolicies = map[string]*db.Policy{
 				Frequency: "1m",
 			},
 		},
-		FileSystems: db.DefaultFilesystems,
+		FileSystems: db.DefaultFilesystems(),
 	},
 	"basic2": {
-		Name: "basic2",
 		Backends: &db.BackendDrivers{
 			CRUD:     "ceph",
 			Mount:    "ceph",
@@ -40,10 +44,9 @@ var testPolicies = map[string]*db.Policy{
 			FileSystem: db.DefaultFilesystem,
 		},
 		RuntimeOptions: &db.RuntimeOptions{},
-		FileSystems:    db.DefaultFilesystems,
+		FileSystems:    db.DefaultFilesystems(),
 	},
 	"untouchedwithzerosize": {
-		Name: "untouchedwithzerosize",
 		Backends: &db.BackendDrivers{
 			CRUD:     "ceph",
 			Mount:    "ceph",
@@ -54,10 +57,9 @@ var testPolicies = map[string]*db.Policy{
 			Size:       "0",
 			FileSystem: db.DefaultFilesystem,
 		},
-		FileSystems: db.DefaultFilesystems,
+		FileSystems: db.DefaultFilesystems(),
 	},
 	"badsize3": {
-		Name: "badsize3",
 		Backends: &db.BackendDrivers{
 			CRUD:     "ceph",
 			Mount:    "ceph",
@@ -68,10 +70,9 @@ var testPolicies = map[string]*db.Policy{
 			Size:       "not a number",
 			FileSystem: db.DefaultFilesystem,
 		},
-		FileSystems: db.DefaultFilesystems,
+		FileSystems: db.DefaultFilesystems(),
 	},
 	"badsnaps": {
-		Name: "badsnaps",
 		Backends: &db.BackendDrivers{
 			CRUD:     "ceph",
 			Mount:    "ceph",
@@ -89,45 +90,41 @@ var testPolicies = map[string]*db.Policy{
 				Frequency: "",
 			},
 		},
-		FileSystems: db.DefaultFilesystems,
+		FileSystems: db.DefaultFilesystems(),
 	},
 	"blanksize": {
 		Backends: &db.BackendDrivers{
 			Mount: "ceph",
 		},
-		Name:          "blanksize",
 		DriverOptions: map[string]string{"pool": "rbd"},
 		CreateOptions: db.CreateOptions{
 			FileSystem: db.DefaultFilesystem,
 		},
 		RuntimeOptions: &db.RuntimeOptions{},
-		FileSystems:    db.DefaultFilesystems,
+		FileSystems:    db.DefaultFilesystems(),
 	},
 	"blanksizewithcrud": {
 		Backends: &db.BackendDrivers{
 			CRUD:  "ceph",
 			Mount: "ceph",
 		},
-		Name:          "blanksize",
 		DriverOptions: map[string]string{"pool": "rbd"},
 		CreateOptions: db.CreateOptions{
 			FileSystem: db.DefaultFilesystem,
 		},
 		RuntimeOptions: &db.RuntimeOptions{},
-		FileSystems:    db.DefaultFilesystems,
+		FileSystems:    db.DefaultFilesystems(),
 	},
 	"nobackend": {
-		Name:          "nobackend",
 		DriverOptions: map[string]string{"pool": "rbd"},
 		CreateOptions: db.CreateOptions{
 			Size:       "10MB",
 			FileSystem: db.DefaultFilesystem,
 		},
 		RuntimeOptions: &db.RuntimeOptions{},
-		FileSystems:    db.DefaultFilesystems,
+		FileSystems:    db.DefaultFilesystems(),
 	},
 	"nfs": {
-		Name: "nfs",
 		Backends: &db.BackendDrivers{
 			Mount: "nfs",
 		},
@@ -135,7 +132,6 @@ var testPolicies = map[string]*db.Policy{
 		RuntimeOptions: &db.RuntimeOptions{},
 	},
 	"cephbackend": {
-		Name:    "cephbackend",
 		Backend: "ceph",
 		CreateOptions: db.CreateOptions{
 			Size:       "10MB",
@@ -143,7 +139,6 @@ var testPolicies = map[string]*db.Policy{
 		},
 	},
 	"nfsbackend": {
-		Name:    "nfsbackend",
 		Backend: "nfs",
 		CreateOptions: db.CreateOptions{
 			Size:       "10MB",
@@ -152,15 +147,12 @@ var testPolicies = map[string]*db.Policy{
 		RuntimeOptions: &db.RuntimeOptions{},
 	},
 	"emptybackend": {
-		Name:    "emptybackend",
 		Backend: "",
 	},
 	"badbackend": {
-		Name:    "badbackend",
 		Backend: "dummy",
 	},
 	"backends": { // "Backend" attribute will be ignored
-		Name: "backends",
 		Backends: &db.BackendDrivers{
 			Mount: "nfs",
 		},
@@ -171,7 +163,6 @@ var testPolicies = map[string]*db.Policy{
 		},
 	},
 	"badbackends": {
-		Name:    "badbackends",
 		Backend: "nfs",
 		Backends: &db.BackendDrivers{
 			Mount: "", // This should not be empty
@@ -186,6 +177,7 @@ var (
 		"nfsbackend",
 		"nfs",
 		"blanksize",
+		"backends",
 	}
 
 	failingPolicies = []string{
@@ -196,7 +188,6 @@ var (
 		"nobackend",
 		"emptybackend",
 		"badbackend",
-		"backends",
 		"badbackends",
 	}
 )
@@ -204,7 +195,7 @@ var (
 func (s *testSuite) TestPolicyCRUD(c *C) {
 	for _, name := range passingPolicies {
 		c.Assert(s.client.Set(testPolicies[name]), IsNil, Commentf("%v", name))
-		policy := db.NewPolicy(testPolicies[name].Name)
+		policy := db.NewPolicy(name)
 		c.Assert(s.client.Get(policy), IsNil, Commentf("%v", name))
 		c.Assert(policy, DeepEquals, testPolicies[name])
 	}

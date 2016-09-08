@@ -11,14 +11,16 @@ import (
 	"strings"
 	. "testing"
 
+	"github.com/contiv/errored"
 	"github.com/contiv/volplugin/api"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/db/impl/etcd"
 
 	. "gopkg.in/check.v1"
 )
 
 type dockerSuite struct {
-	client *config.Client
+	client db.Client
 	api    *api.API
 	server *httptest.Server
 }
@@ -30,13 +32,13 @@ func TestDockerAPI(t *T) { TestingT(t) }
 func (s *dockerSuite) SetUpTest(c *C) {
 	c.Assert(exec.Command("sh", "-c", "set -e; for i in $(rbd ls); do rbd snap purge $i; rbd rm $i; done").Run(), IsNil)
 	exec.Command("/bin/sh", "-c", "etcdctl rm --recursive /volplugin").Run()
-	client, err := config.NewClient("/volplugin", []string{"http://127.0.0.1:2379"})
+	client, err := etcd.NewClient([]string{"http://127.0.0.1:2379"}, "/volplugin")
 	if err != nil {
 		c.Fatal(err)
 	}
 
 	s.client = client
-	global := config.NewGlobalConfig()
+	global := db.NewGlobal()
 	s.api = api.NewAPI(NewVolplugin(), "mon0", client, &global)
 	s.server = httptest.NewServer(s.api.Router(s.api))
 }
@@ -67,15 +69,18 @@ func (s *dockerSuite) TearDownTest(c *C) {
 }
 
 func (s *dockerSuite) TestBasic(c *C) {
-	err := s.client.PublishPolicy("policy1", &config.Policy{
-		Name:          "policy1",
+	policy := &db.Policy{
 		Backend:       "ceph",
 		DriverOptions: map[string]string{"pool": "rbd"},
-		CreateOptions: config.CreateOptions{
+		CreateOptions: db.CreateOptions{
 			Size: "10MB",
 		},
-		RuntimeOptions: config.RuntimeOptions{},
-	})
+		RuntimeOptions: &db.RuntimeOptions{},
+	}
+
+	policy.SetKey("policy1")
+
+	err := s.client.Set(policy)
 	c.Assert(err, IsNil)
 
 	resp, err := s.postStruct("VolumeDriver.Create", map[string]string{})
@@ -91,6 +96,9 @@ func (s *dockerSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, 200, Commentf("%v", resp))
 
+	errored.AlwaysTrace = true
+	errored.AlwaysDebug = true
+
 	dockerResp, err = s.unmarshalResponse(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(dockerResp.Err, Not(Equals), "", Commentf("%v", dockerResp))
@@ -105,8 +113,8 @@ func (s *dockerSuite) TestBasic(c *C) {
 	c.Assert(dockerResp.Err, Equals, "", Commentf("%v", dockerResp))
 	c.Assert(dockerResp.Mountpoint, Equals, "", Commentf("%v", dockerResp))
 
-	vol, err := s.client.GetVolume("policy1", "test")
-	c.Assert(err, IsNil)
+	vol := db.NewVolume("policy1", "test")
+	c.Assert(s.client.Get(vol), IsNil)
 	c.Assert(vol.String(), Equals, "policy1/test")
 
 	out, err := exec.Command("rbd", "ls").CombinedOutput()
@@ -146,7 +154,7 @@ func (s *dockerSuite) TestBasic(c *C) {
 	c.Assert(len(list.Volumes), Equals, 1)
 	c.Assert(list.Volumes[0].Name, Equals, "policy1/test")
 
-	c.Assert(s.client.RemoveVolume("policy1", "test"), IsNil)
+	c.Assert(s.client.Delete(vol), IsNil)
 
 	// XXX config lib cannot remove the literal rbd volume so we just test the
 	// API responses here.

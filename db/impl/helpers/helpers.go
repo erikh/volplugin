@@ -120,7 +120,7 @@ func WrapDelete(c db.Client, obj db.Entity, fun func(string) error) error {
 
 // TrimPath removes the prefix from a key, and removes leading and trailing slashes.
 func TrimPath(c db.Client, key string) string {
-	return strings.Trim(strings.TrimPrefix(strings.Trim(key, "/"), c.Prefix()), "/")
+	return strings.Trim(strings.TrimPrefix(strings.Trim(key, "/"), strings.Trim(c.Prefix(), "/")), "/")
 }
 
 // WrapWatch wraps watch calls in each client.
@@ -147,6 +147,7 @@ func WrapWatch(c db.Client, obj db.Entity, path string, recursive bool, watchers
 	if ok {
 		close(watchers[path])
 	}
+
 	watchers[path] = stopChan
 
 	return retChan, errChan
@@ -172,7 +173,7 @@ func WatchStop(c db.Client, path string, watchers map[string]chan struct{}, mute
 func ReadAndSet(c db.Client, obj db.Entity, key string, value []byte) (db.Entity, error) {
 	copy := obj.Copy()
 
-	if err := jsonio.Read(copy, []byte(value)); err != nil {
+	if err := jsonio.Read(copy, value); err != nil {
 		// This is kept this way so a buggy policy won't break listing all of them
 		return nil, errored.Errorf("Received error retrieving value at path %q: %v", key, err)
 	}

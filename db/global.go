@@ -1,8 +1,19 @@
 package db
 
+import "encoding/json"
+
 // NewGlobal constructs a new global object.
 func NewGlobal() *Global {
-	return &Global{}
+	g := &Global{}
+	g.prep()
+	return g
+}
+
+// NewGlobalFromJSON constructs a global from a JSON payload.
+func NewGlobalFromJSON(content []byte) (*Global, error) {
+	global := NewGlobal()
+	err := json.Unmarshal(content, global)
+	return global, err
 }
 
 // SetKey is not implmented here because it is not needed
@@ -20,8 +31,7 @@ func (g *Global) Prefix() string {
 	return ""
 }
 
-// Validate validates the global configuration.
-func (g *Global) Validate() error {
+func (g *Global) prep() {
 	if g.MountPath == "" {
 		g.MountPath = DefaultMountPath
 	}
@@ -33,7 +43,11 @@ func (g *Global) Validate() error {
 	if g.Timeout < TimeoutFixBase {
 		g.Timeout = DefaultTimeout
 	}
+}
 
+// Validate validates the global configuration.
+func (g *Global) Validate() error {
+	g.prep()
 	return nil
 }
 

@@ -8,9 +8,8 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/errored"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/errors"
-	"github.com/contiv/volplugin/lock"
 	"github.com/contiv/volplugin/storage"
 	"github.com/contiv/volplugin/storage/backend"
 	"github.com/docker/engine-api/client"
@@ -87,7 +86,6 @@ func (dc *DaemonConfig) updateMounts() error {
 	}
 
 	for name, mount := range mountNames {
-		logrus.Debugf("%s: %#v", name, *mount)
 		if mount != nil {
 			dc.API.MountCounter.AddCount(name, counts[name])
 
@@ -97,7 +95,9 @@ func (dc *DaemonConfig) updateMounts() error {
 				continue
 			}
 
-			vol, err := dc.Client.GetVolume(parts[0], parts[1])
+			vol := db.NewVolume(parts[0], parts[1])
+
+			err := dc.Client.Get(vol)
 			if erd, ok := err.(*errored.Error); ok {
 				switch {
 				case erd.Contains(errors.NotExists):
@@ -110,27 +110,23 @@ func (dc *DaemonConfig) updateMounts() error {
 				logrus.Fatalf("Unknown error reading from apiserver: %v", err)
 			}
 
-			payload := &config.UseMount{
-				Volume:   name,
-				Reason:   lock.ReasonMount,
-				Hostname: dc.API.Hostname,
-			}
-
-			if vol.Unlocked {
-				payload.Hostname = lock.Unlocked
-			}
+			mo := db.NewMountOwner(dc.API.Hostname, vol)
 
 			// only populate the mount if it doesn't already exist.
 			if _, err := dc.API.MountCollection.Get(name); err != nil {
 				dc.API.MountCollection.Add(mount)
-				// since this may run twice, it will terminate the original goroutine via the original stop channel.
-				stopChan, err := dc.API.Lock.AcquireWithTTLRefresh(payload, dc.Global.TTL, dc.Global.Timeout)
-				if err != nil {
-					logrus.Fatalf("Error encountered while trying to acquire lock for mount %v: %v", payload, err)
-					continue
-				}
 
-				dc.API.AddStopChan(name, stopChan)
+				if !vol.Unlocked {
+					stopChan, err := dc.Client.AcquireAndRefresh(mo, dc.Global.TTL)
+					if err != nil {
+						logrus.Fatalf("Error encountered while trying to acquire lock for mount %v: %v", mo, err)
+						continue
+					}
+
+					// since this may run twice, it will terminate the original goroutine
+					// via the original stop channel as a part of this function call.
+					dc.API.AddStopChan(name, stopChan)
+				}
 			}
 		} else {
 			logrus.Errorf("Missing mount data for %q which was reported by volplugin or docker as previously mounted", name)

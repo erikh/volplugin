@@ -11,9 +11,8 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/volplugin/api/internals/mount"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/errors"
-	"github.com/contiv/volplugin/lock"
 	"github.com/contiv/volplugin/storage"
 	"github.com/contiv/volplugin/storage/backend"
 )
@@ -35,9 +34,8 @@ func (v *Volume) String() string {
 type API struct {
 	Volplugin
 	Hostname          string
-	Client            *config.Client
-	Global            **config.Global // double pointer so we can track watch updates
-	Lock              *lock.Driver
+	Client            db.Client
+	Global            **db.Global // double pointer so we can track watch updates
 	lockStopChanMutex sync.Mutex
 	lockStopChans     map[string]chan struct{}
 	MountCounter      *mount.Counter
@@ -45,13 +43,12 @@ type API struct {
 }
 
 // NewAPI returns an *API
-func NewAPI(volplugin Volplugin, hostname string, client *config.Client, global **config.Global) *API {
+func NewAPI(volplugin Volplugin, hostname string, client db.Client, global **db.Global) *API {
 	return &API{
 		Volplugin:       volplugin,
 		Hostname:        hostname,
 		Client:          client,
 		Global:          global,
-		Lock:            lock.NewDriver(client),
 		MountCollection: mount.NewCollection(),
 		MountCounter:    mount.NewCounter(),
 		lockStopChans:   map[string]chan struct{}{},
@@ -103,10 +100,10 @@ func LogHandler(name string, debug bool, actionFunc func(http.ResponseWriter, *h
 }
 
 // GetStorageParameters accepts a Volume API request and turns it into several internal structs.
-func (a *API) GetStorageParameters(uc *Volume) (storage.MountDriver, *config.Volume, storage.DriverOptions, error) {
+func (a *API) GetStorageParameters(uc *Volume) (storage.MountDriver, *db.Volume, storage.DriverOptions, error) {
 	driverOpts := storage.DriverOptions{}
-	volConfig, err := a.Client.GetVolume(uc.Policy, uc.Name)
-	if err != nil {
+	volConfig := db.NewVolume(uc.Policy, uc.Name)
+	if err := a.Client.Get(volConfig); err != nil {
 		return nil, nil, driverOpts, err
 	}
 

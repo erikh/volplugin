@@ -5,20 +5,25 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/contiv/errored"
 	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/errors"
 	. "gopkg.in/check.v1"
 )
 
 func (s *testSuite) TestLockAcquire(c *C) {
 	copy := testPolicies["basic"].Copy()
-	copy.(*db.Policy).Name = "policy1"
+	copy.SetKey("policy1")
 	c.Assert(s.client.Set(copy), IsNil)
 
-	v, err := db.CreateVolume(&db.VolumeRequest{Policy: copy.(*db.Policy), Name: "test"})
+	v, err := db.CreateVolume(copy.(*db.Policy), "test", nil)
 	c.Assert(err, IsNil, Commentf("%v", v))
 	c.Assert(s.client.Set(v), IsNil)
 
 	lock := db.NewCreateOwner("mon0", v)
+
+	err = s.client.Get(lock)
+	c.Assert(err.(*errored.Error).Contains(errors.NotExists), Equals, true)
 
 	path, err := lock.Path()
 	c.Assert(err, IsNil)
@@ -26,8 +31,9 @@ func (s *testSuite) TestLockAcquire(c *C) {
 	c.Assert(lock.Prefix(), Equals, "users/volume")
 	c.Assert(s.client.Acquire(lock), IsNil)
 
-	testUse := db.NewUse(v)
+	testUse := db.NewCreateOwner("mon0", v)
 	c.Assert(s.client.Get(testUse), IsNil)
+	c.Assert(s.client.Free(lock, false), IsNil)
 
 	// test that we can acquire the fetched lock.
 	path, err = testUse.Path()
@@ -50,10 +56,10 @@ func (s *testSuite) TestLockAcquire(c *C) {
 
 func (s *testSuite) TestLockBattery(c *C) {
 	copy := testPolicies["basic"].Copy()
-	copy.(*db.Policy).Name = "policy1"
+	copy.SetKey("policy1")
 	c.Assert(s.client.Set(copy), IsNil)
 
-	v, err := db.CreateVolume(&db.VolumeRequest{Policy: copy.(*db.Policy), Name: "test"})
+	v, err := db.CreateVolume(copy.(*db.Policy), "test", nil)
 	c.Assert(err, IsNil, Commentf("%v", v))
 	c.Assert(s.client.Set(v), IsNil)
 
@@ -63,32 +69,13 @@ func (s *testSuite) TestLockBattery(c *C) {
 	// go routine A should never free the lock.
 	// go routine B should never succeed at acquiring it.
 
-	syncChan1 := make(chan struct{})
-	syncChan2 := make(chan struct{}, 1)
-
-	defer func() {
-		syncChan2 <- struct{}{} // this relays to the first one to ensure the lock is freed
-		syncChan1 <- struct{}{} // this relays to the second one to terminate it
-	}()
-
-	go func(v *db.Volume) {
-		lock := db.NewCreateOwner("mon0", v)
-		for {
-			select {
-			case <-syncChan1:
-				s.client.Free(lock, true)
-				return
-			default:
-				c.Assert(s.client.Acquire(lock), IsNil)
-			}
-		}
-	}(v)
+	sync := make(chan struct{}, 1)
 
 	go func(v *db.Volume) {
 		lock := db.NewCreateOwner("mon1", v)
 		for {
 			select {
-			case <-syncChan2:
+			case <-sync:
 				return
 			default:
 				logrus.Debug("Attempting to acquire lock (should fail)")
@@ -99,14 +86,16 @@ func (s *testSuite) TestLockBattery(c *C) {
 
 	logrus.Infof("Creating contention in %s", Driver)
 	time.Sleep(time.Minute)
+	sync <- struct{}{}
+	c.Assert(s.client.Free(lock, false), IsNil)
 }
 
 func (s *testSuite) TestLockTTL(c *C) {
 	copy := testPolicies["basic"].Copy()
-	copy.(*db.Policy).Name = "policy1"
+	copy.SetKey("policy1")
 	c.Assert(s.client.Set(copy), IsNil)
 
-	v, err := db.CreateVolume(&db.VolumeRequest{Policy: copy.(*db.Policy), Name: "test"})
+	v, err := db.CreateVolume(copy.(*db.Policy), "test", nil)
 	c.Assert(err, IsNil, Commentf("%v", v))
 	c.Assert(s.client.Set(v), IsNil)
 
@@ -127,10 +116,10 @@ func (s *testSuite) TestLockTTL(c *C) {
 
 func (s *testSuite) TestLockTTLRefresh(c *C) {
 	copy := testPolicies["basic"].Copy()
-	copy.(*db.Policy).Name = "policy1"
+	copy.SetKey("policy1")
 	c.Assert(s.client.Set(copy), IsNil)
 
-	v, err := db.CreateVolume(&db.VolumeRequest{Policy: copy.(*db.Policy), Name: "test"})
+	v, err := db.CreateVolume(copy.(*db.Policy), "test", nil)
 	c.Assert(err, IsNil, Commentf("%v", v))
 	c.Assert(s.client.Set(v), IsNil)
 

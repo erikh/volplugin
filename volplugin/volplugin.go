@@ -2,6 +2,7 @@ package volplugin
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -14,9 +15,11 @@ import (
 	"github.com/contiv/errored"
 	"github.com/contiv/volplugin/api"
 	"github.com/contiv/volplugin/api/impl/docker"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/db/impl/consul"
+	"github.com/contiv/volplugin/db/impl/etcd"
 	"github.com/contiv/volplugin/info"
-	"github.com/contiv/volplugin/watch"
+	consulapi "github.com/hashicorp/consul/api"
 	"github.com/jbeda/go-wait"
 )
 
@@ -26,8 +29,8 @@ const basePath = "/run/docker/plugins"
 // the cli package in volplugin/volplugin.
 type DaemonConfig struct {
 	Hostname   string
-	Global     *config.Global
-	Client     *config.Client
+	Global     *db.Global
+	Client     db.Client
 	API        *api.API
 	PluginName string
 }
@@ -35,11 +38,24 @@ type DaemonConfig struct {
 // NewDaemonConfig creates a DaemonConfig from the master host and hostname
 // arguments.
 func NewDaemonConfig(ctx *cli.Context) *DaemonConfig {
+	datastore, storeURLs, prefix := ctx.String("store"), ctx.StringSlice("store-url"), ctx.String("prefix")
+
+	var client db.Client
+	var err error
 
 retry:
-	client, err := config.NewClient(ctx.String("prefix"), ctx.StringSlice("etcd"))
+
+	switch datastore {
+	case "etcd":
+		client, err = etcd.NewClient(storeURLs, prefix)
+	case "consul":
+		client, err = consul.NewClient(&consulapi.Config{Address: storeURLs[0]}, prefix)
+	default:
+		log.Fatalf("We do not support data store %q", datastore)
+	}
+
 	if err != nil {
-		logrus.Warn("Could not establish client to etcd cluster: %v. Retrying.", err)
+		logrus.Warn("Could not establish client to %q: %v. Retrying.", datastore, err)
 		time.Sleep(wait.Jitter(time.Second, 0))
 		goto retry
 	}
@@ -50,7 +66,7 @@ retry:
 		PluginName: ctx.String("plugin-name"),
 	}
 
-	if dc.PluginName == "" || strings.Contains(dc.PluginName, "/") {
+	if dc.PluginName == "" || strings.Contains(dc.PluginName, "/") || strings.Contains(dc.PluginName, ".") {
 		logrus.Fatal("Cannot continue; socket name contains empty value or invalid characters")
 	}
 
@@ -59,11 +75,12 @@ retry:
 
 // Daemon starts the volplugin service.
 func (dc *DaemonConfig) Daemon() error {
-	global, err := dc.Client.GetGlobal()
-	if err != nil {
+	global := db.NewGlobal()
+
+	if err := dc.Client.Get(global); err != nil {
 		logrus.Errorf("Error fetching global configuration: %v", err)
 		logrus.Infof("No global configuration. Proceeding with defaults...")
-		global = config.NewGlobalConfig()
+		global = db.NewGlobal()
 	}
 
 	dc.Global = global
@@ -75,18 +92,23 @@ func (dc *DaemonConfig) Daemon() error {
 
 	go info.HandleDebugSignal()
 
-	activity := make(chan *watch.Watch)
-	dc.Client.WatchGlobal(activity)
+	activity := make(chan db.Entity)
+	activity, errChan := dc.Client.Watch(&db.Global{})
 	go func() {
 		for {
-			dc.Global = (<-activity).Config.(*config.Global)
+			select {
+			case err := <-errChan:
+				logrus.Errorf("Received error during global watch: %v", err)
+			case tmp := <-activity:
+				logrus.Debugf("Received global %#v", tmp)
 
-			logrus.Debugf("Received global %#v", dc.Global)
+				dc.Global = tmp.(*db.Global)
 
-			errored.AlwaysDebug = dc.Global.Debug
-			errored.AlwaysTrace = dc.Global.Debug
-			if dc.Global.Debug {
-				logrus.SetLevel(logrus.DebugLevel)
+				errored.AlwaysDebug = dc.Global.Debug
+				errored.AlwaysTrace = dc.Global.Debug
+				if dc.Global.Debug {
+					logrus.SetLevel(logrus.DebugLevel)
+				}
 			}
 		}
 	}()

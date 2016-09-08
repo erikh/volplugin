@@ -32,9 +32,14 @@ func main() {
 			Usage: "prefix key used in etcd for namespacing",
 			Value: "/volplugin",
 		},
+		cli.StringFlag{
+			Name:  "store",
+			Usage: "cluster store to use. 'etcd' or 'consul'.",
+			Value: "etcd",
+		},
 		cli.StringSliceFlag{
-			Name:  "etcd",
-			Usage: "URL for etcd",
+			Name:  "store-url",
+			Usage: "URL for cluster stores",
 			Value: &cli.StringSlice{"http://localhost:2379"},
 		},
 		cli.StringFlag{

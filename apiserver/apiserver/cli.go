@@ -2,29 +2,53 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
-	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/volplugin/apiserver"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
+	"github.com/contiv/volplugin/db/impl/consul"
+	"github.com/contiv/volplugin/db/impl/etcd"
+	"github.com/hashicorp/consul/api"
 
 	"github.com/codegangsta/cli"
 )
 
 // version is provided by build
-var version = ""
+var (
+	version  = ""
+	hostname = ""
+)
+
+func init() {
+	var err error
+	hostname, err = os.Hostname()
+	if err != nil {
+		log.Fatalf("Error processing hostname syscall: %v", err)
+	}
+}
 
 func start(ctx *cli.Context) {
-	cfg, err := config.NewClient(ctx.String("prefix"), ctx.StringSlice("etcd"))
+	var cfg db.Client
+	var err error
+
+	switch ctx.String("store") {
+	case "etcd":
+		cfg, err = etcd.NewClient(ctx.StringSlice("store-url"), ctx.String("prefix"))
+	case "consul":
+		cfg, err = consul.NewClient(&api.Config{Address: ctx.StringSlice("store-url")[0]}, ctx.String("prefix"))
+	default:
+		log.Fatalf("Volplugin does not support store %v. Please supply a valid cluster store.", ctx.String("store"))
+	}
+
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
 	d := &apiserver.DaemonConfig{
-		Config:   cfg,
-		MountTTL: ctx.Int("ttl"),
-		Timeout:  time.Duration(ctx.Int("timeout")) * time.Minute,
+		Client:   cfg,
+		Hostname: hostname,
 	}
 
 	d.Daemon(ctx.String("listen"))
@@ -48,9 +72,20 @@ func main() {
 			Value: "/volplugin",
 		},
 		cli.StringSliceFlag{
-			Name:  "etcd",
-			Usage: "URL for etcd",
+			Name:  "store-url",
+			Usage: "URL for data store (etcd, consul etc). May be repeated to specify multiple servers.",
 			Value: &cli.StringSlice{"http://localhost:2379"},
+		},
+		cli.StringFlag{
+			Name:  "store",
+			Value: "etcd",
+			Usage: "[etcd | consul] select the type of data store to use",
+		},
+		cli.StringFlag{
+			Name:   "host-label",
+			Usage:  "Set the internal hostname for handling locks",
+			EnvVar: "HOSTLABEL",
+			Value:  hostname,
 		},
 	}
 

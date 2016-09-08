@@ -8,7 +8,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/volplugin/api"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/errors"
 	"github.com/contiv/volplugin/storage"
 	"github.com/gorilla/mux"
@@ -67,7 +67,7 @@ func (v *Volplugin) HTTPError(w http.ResponseWriter, err error) {
 }
 
 // ReadCreate reads a create request from docker and parses it into a policy/volume.
-func (v *Volplugin) ReadCreate(r *http.Request) (*config.VolumeRequest, error) {
+func (v *Volplugin) ReadCreate(r *http.Request) (*db.VolumeRequest, error) {
 	content, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return nil, errors.ReadBody.Combine(err)
@@ -84,7 +84,7 @@ func (v *Volplugin) ReadCreate(r *http.Request) (*config.VolumeRequest, error) {
 		return nil, errors.UnmarshalRequest.Combine(errors.InvalidVolume).Combine(err)
 	}
 
-	return &config.VolumeRequest{
+	return &db.VolumeRequest{
 		Policy:  policy,
 		Name:    volume,
 		Options: req.Opts,
@@ -92,7 +92,7 @@ func (v *Volplugin) ReadCreate(r *http.Request) (*config.VolumeRequest, error) {
 }
 
 // WriteCreate writes the response to a create request back to docker.
-func (v *Volplugin) WriteCreate(volConfig *config.Volume, w http.ResponseWriter) error {
+func (v *Volplugin) WriteCreate(volConfig *db.Volume, w http.ResponseWriter) error {
 	content, err := json.Marshal(Response{})
 	if err != nil {
 		return err
@@ -172,10 +172,10 @@ func (v *Volplugin) WritePath(mountpoint string, w http.ResponseWriter) error {
 }
 
 // WriteList writes out a list of volume names to the requesting docker.
-func (v *Volplugin) WriteList(volumes []string, w http.ResponseWriter) error {
+func (v *Volplugin) WriteList(volumes []db.Entity, w http.ResponseWriter) error {
 	response := VolumeList{}
 	for _, volume := range volumes {
-		response.Volumes = append(response.Volumes, Volume{Name: volume})
+		response.Volumes = append(response.Volumes, Volume{Name: volume.String()})
 	}
 
 	content, err := json.Marshal(response)

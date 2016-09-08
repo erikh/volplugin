@@ -139,7 +139,7 @@ func (c *Client) lock(obj db.Lock, ttl time.Duration, refresh bool) (*lock, bool
 		Key:              c.qualified(path),
 		Value:            content,
 		SessionTTL:       ttl.String(),
-		MonitorRetryTime: ttl,
+		MonitorRetryTime: ttl / 4,
 		MonitorRetries:   -1,
 	})
 
@@ -147,13 +147,7 @@ func (c *Client) lock(obj db.Lock, ttl time.Duration, refresh bool) (*lock, bool
 		return nil, false, err
 	}
 
-	stopChan := make(chan struct{})
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		close(stopChan)
-	}()
-
-	monitor, err := mylock.Lock(stopChan)
+	monitor, err := mylock.Lock(nil)
 	if err != nil {
 		return nil, false, err
 	}

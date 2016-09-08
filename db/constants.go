@@ -3,15 +3,17 @@ package db
 import "time"
 
 // DefaultDrivers are macro type definitions for backend drivers.
-var DefaultDrivers = map[string]*BackendDrivers{
-	"ceph": {"ceph", "ceph", "ceph"},
-	"nfs":  {"", "nfs", ""},
+func DefaultDrivers() map[string]*BackendDrivers {
+	return map[string]*BackendDrivers{
+		"ceph": {"ceph", "ceph", "ceph"},
+		"nfs":  {"", "nfs", ""},
+	}
 }
 
 // DefaultFilesystems is a map of our default supported filesystems. Overridden
 // by policy.
-var DefaultFilesystems = map[string]string{
-	"ext4": "mkfs.ext4 -m0 %",
+func DefaultFilesystems() map[string]string {
+	return map[string]string{"ext4": "mkfs.ext4 -m0 %"}
 }
 
 const (
@@ -38,4 +40,5 @@ const (
 	rootVolume         = "volumes"
 	rootRuntimeOptions = "runtime-policies"
 	rootPolicy         = "policies"
+	rootSnapshots      = "snapshots"
 )

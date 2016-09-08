@@ -5,7 +5,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/contiv/errored"
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/errors"
 	"github.com/contiv/volplugin/storage"
 	"github.com/contiv/volplugin/storage/backend"
@@ -14,7 +14,7 @@ import (
 const defaultFsCmd = "mkfs.ext4 -m0 %"
 
 // CreateVolume performs the dirty work of actually constructing a volume.
-func CreateVolume(policy *config.Policy, config *config.Volume, timeout time.Duration) (storage.DriverOptions, error) {
+func CreateVolume(policy *db.Policy, config *db.Volume, timeout time.Duration) (storage.DriverOptions, error) {
 	var (
 		fscmd string
 		ok    bool
@@ -62,7 +62,7 @@ func CreateVolume(policy *config.Policy, config *config.Volume, timeout time.Dur
 }
 
 // FormatVolume formats an existing volume.
-func FormatVolume(config *config.Volume, do storage.DriverOptions) error {
+func FormatVolume(config *db.Volume, do storage.DriverOptions) error {
 	actualSize, err := config.CreateOptions.ActualSize()
 	if err != nil {
 		return err
@@ -83,7 +83,7 @@ func FormatVolume(config *config.Volume, do storage.DriverOptions) error {
 }
 
 // ExistsVolume tells if a volume exists. It is *not* suitable for any locking primitive.
-func ExistsVolume(config *config.Volume, timeout time.Duration) (bool, error) {
+func ExistsVolume(config *db.Volume, timeout time.Duration) (bool, error) {
 	if config.Backends.CRUD == "" {
 		logrus.Debugf("volume %q, backend is unspecified", config)
 		return true, errors.NoActionTaken
@@ -106,7 +106,7 @@ func ExistsVolume(config *config.Volume, timeout time.Duration) (bool, error) {
 }
 
 // RemoveVolume removes a volume.
-func RemoveVolume(config *config.Volume, timeout time.Duration) error {
+func RemoveVolume(config *db.Volume, timeout time.Duration) error {
 	if config.Backends.CRUD == "" {
 		logrus.Debugf("Not removing volume %q, backend is unspecified", config)
 		return errors.NoActionTaken

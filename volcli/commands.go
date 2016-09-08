@@ -1,6 +1,20 @@
 package volcli
 
-import "github.com/codegangsta/cli"
+import (
+	"os"
+
+	"github.com/codegangsta/cli"
+)
+
+var hostname string
+
+func init() {
+	var err error
+	hostname, err = os.Hostname()
+	if err != nil {
+		panic(err)
+	}
+}
 
 // GlobalFlags are required global flags for the operation of volcli.
 var GlobalFlags = []cli.Flag{
@@ -10,14 +24,24 @@ var GlobalFlags = []cli.Flag{
 		Value: "/volplugin",
 	},
 	cli.StringSliceFlag{
-		Name:  "etcd",
-		Usage: "URL for etcd",
+		Name:  "store-url",
+		Usage: "URL for data store (etcd, consul etc). May be repeated to specify multiple servers.",
 		Value: &cli.StringSlice{"http://localhost:2379"},
+	},
+	cli.StringFlag{
+		Name:  "store",
+		Value: "etcd",
+		Usage: "[etcd | consul] select the type of data store to use",
 	},
 	cli.StringFlag{
 		Name:  "apiserver",
 		Usage: "address of apiserver process",
 		Value: "127.0.0.1:9005",
+	},
+	cli.StringFlag{
+		Name:  "hostname",
+		Usage: "Identity of host for taking locks and other breadcrumb operations",
+		Value: hostname,
 	},
 }
 

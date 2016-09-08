@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 	. "testing"
 
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/contiv/volplugin/storage"
 
 	. "gopkg.in/check.v1"
@@ -18,8 +18,8 @@ var _ = Suite(&cgroupSuite{})
 func TestCGroup(t *T) { TestingT(t) }
 
 func (s *cgroupSuite) TestApplyCGroupRateLimit(c *C) {
-	err := ApplyCGroupRateLimit(config.RuntimeOptions{
-		RateLimit: config.RateLimitConfig{
+	err := ApplyCGroupRateLimit(&db.RuntimeOptions{
+		RateLimit: db.RateLimitConfig{
 			WriteBPS: 123456,
 			ReadBPS:  654321,
 		},
@@ -27,8 +27,8 @@ func (s *cgroupSuite) TestApplyCGroupRateLimit(c *C) {
 	c.Assert(err, IsNil)
 
 	defer func() {
-		ApplyCGroupRateLimit(config.RuntimeOptions{
-			RateLimit: config.RateLimitConfig{
+		ApplyCGroupRateLimit(&db.RuntimeOptions{
+			RateLimit: db.RateLimitConfig{
 				WriteBPS: 0,
 				ReadBPS:  0,
 			},

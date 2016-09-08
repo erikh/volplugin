@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/contiv/volplugin/config"
+	"github.com/contiv/volplugin/db"
 	"github.com/gorilla/mux"
 )
 
@@ -17,13 +17,13 @@ type HTTP interface {
 // (docker/k8s/mesos).
 type Volplugin interface {
 	HTTP
-	ReadCreate(*http.Request) (*config.VolumeRequest, error)
-	WriteCreate(*config.Volume, http.ResponseWriter) error
+	ReadCreate(*http.Request) (*db.VolumeRequest, error)
+	WriteCreate(*db.Volume, http.ResponseWriter) error
 	ReadGet(*http.Request) (string, error)
 	WriteGet(string, string, http.ResponseWriter) error
 	ReadPath(*http.Request) (string, error)
 	WritePath(string, http.ResponseWriter) error
-	WriteList([]string, http.ResponseWriter) error
+	WriteList([]db.Entity, http.ResponseWriter) error
 	ReadMount(*http.Request) (*Volume, error)
 	WriteMount(string, http.ResponseWriter) error
 }
